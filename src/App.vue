@@ -3,10 +3,10 @@
     <SafeWrapper>
       <div class="scroll-wrapper">
         <router-view v-slot="{ Component, route }">
-          <keep-alive :include="keepAlivePages" :max="5">
+          <keep-alive :include="keepAlivePages">
             <component 
               :is="Component" 
-              :key="getRouteCacheKey(route)"
+              :key="route.name === 'VideoRankPage' ? 'VideoRankPage' : route.fullPath"
             />
           </keep-alive>
         </router-view>
@@ -23,11 +23,13 @@ import { useUserStore } from '@/store/user'
 
 // 1. 定义需要缓存的页面（按路由的name）
 const keepAlivePages = ref([
-  'Acg',                  // 主框架页
-  'ComicDetail',          // 漫画详情页
-  'AcgComicRecommend',    // 漫画推荐页
-  'AcgNovelRecommend',    // 小说推荐页（可选）
-  'AcgAnimeRecommend'     // 动漫推荐页（可选）
+  'SearchPopup',
+  'ComicDetail',
+  'AcgComicRecommend',
+  'AcgNovelRecommend',
+  'AcgAnimeRecommend',
+  'AllCategories',
+  'VideoRankPage' // 加上你的榜单页路由name
 ])
 
 // 2. 动态生成缓存Key（兼容params和query）
