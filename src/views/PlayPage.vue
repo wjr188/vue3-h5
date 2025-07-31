@@ -26,24 +26,31 @@
         播放量：{{ formatViews(views) }} &nbsp;&nbsp; 推荐率：100%
       </div>
       <div
-        v-if="!userStore.isVIP"
-        class="meta"
-        style="position: relative; display: flex; align-items: center; min-height: 32px;"
-      >
-        <div style="flex:1;">
-          剩余观看次数：
-          <span v-if="isRemainingLoading">加载中...</span>
-          <span v-else>{{ userStore.longVideoRemaining }}</span>
-        </div>
-        <CardCornerIcon
-          :showVipTip="videoDetail?.vip"
-          :showCoinTip="!videoDetail?.vip && videoDetail?.coin > 0 && !videoDetail?.unlocked"
-          :coinAmount="videoDetail?.coin"
-          @vipClick="showVipModal = true"
-          @coinClick="showCoinModal = true"
-          class="corner-absolute"
-        />
-      </div>
+  class="meta"
+  style="position: relative; display: flex; align-items: center; min-height: 32px;"
+>
+  <div style="flex:1;">
+    剩余观看次数：
+    <span v-if="isRemainingLoading">加载中...</span>
+    <span v-else>{{ userStore.longVideoRemaining }}</span>
+  </div>
+  <!-- VIP角标 -->
+  <CardCornerIcon
+    v-if="showVipCorner"
+    :showVipTip="true"
+    :coinAmount="videoDetail?.coin"
+    @vipClick="showVipModal = true"
+    class="corner-absolute"
+  />
+  <!-- 金币角标 -->
+  <CardCornerIcon
+    v-else-if="showCoinCorner"
+    :showCoinTip="true"
+    :coinAmount="videoDetail?.coin"
+    @coinClick="showCoinModal = true"
+    class="corner-absolute"
+  />
+</div>
     </div>
 
     <div class="actions">
@@ -53,7 +60,9 @@
       </div>
       <div class="action" @click="toggleFavorite">
         <img :src="isFavorited ? '/icons/star7.svg' : '/icons/star6.svg'" class="action-icon" />
-        <div class="action-text">{{ formatViews(favoriteCount) }}</div>
+        <div class="action-text">
+          {{ favoriteCount === null ? '加载中...' : formatViews(favoriteCount) }}
+        </div>
       </div>
       <div class="action" @click="goShare">
         <img src="/icons/share2.svg" class="action-icon" />
@@ -61,21 +70,9 @@
       </div>
     </div>
 
-    <div class="section-title">猜你喜欢</div>
-    <div class="recommend-list">
-      <div
-        class="card"
-        v-for="(item, i) in recommended"
-        :key="i"
-        @click="goToPlay(item)"
-      >
-        <div class="thumb-wrapper">
-          <img :src="item.cover" class="thumb" />
-        </div>
-        <div class="text">{{ item.title }}</div>
-        <div class="mini-tag">{{ item.tag }}</div>
-      </div>
-    </div>
+    <GuessYouLike :videoId="videoDetail?.id || 0" @play="goToPlay" />
+      
+    
 
     <div v-if="showLineSelector" class="overlay" @click.self="showLineSelector = false">
       <div class="line-popup">
@@ -126,15 +123,16 @@
   </div>
 </template>
 <script setup lang="ts">
-import { ref, onMounted, watch, nextTick } from 'vue'
+import { ref, onMounted, watch, nextTick, computed } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import VideoPlayer from '@/components/VideoPlayer.vue'
+import GuessYouLike from '@/components/GuessYouLike.vue'
 import { useHistoryStore } from '@/store/useHistoryStore'
 import { showToast, showConfirmDialog } from 'vant'
 import { useUserStore } from '@/store/user'
 import { useLongVideoStore } from '@/store/longVideoStore'
 import { encode, decode } from '@/utils/base62'
-
+import { trackLongVideoAction } from '@/api/longVideo.api'; // 导入 API 方法
 const route = useRoute()
 const router = useRouter()
 const historyStore = useHistoryStore()
@@ -153,8 +151,8 @@ const videoUrl = ref<string | null>(null)
 // 标签、播放量等显示字段
 const tags = ref<string[]>([])
 const views = ref<number>(0)
-const likeCount = ref<number>(28000)
-const favoriteCount = ref<number>(7300)
+const likeCount = ref<number>(0); // 初始值为 0
+const favoriteCount = ref<number | null>(null)
 
 // 弹窗状态
 const showLineSelector = ref(false)
@@ -179,11 +177,11 @@ async function loadVideoDetail() {
       return
     }
 
-    // 赋值显示数据
+    // 更新显示数据
     tags.value = videoDetail.value.tags || []
     views.value = videoDetail.value.play || 0
-    likeCount.value = videoDetail.value.likeCount || 28000
-    favoriteCount.value = videoDetail.value.favoriteCount || 7300
+    likeCount.value = videoDetail.value.like || 0; // 更新点赞数
+    favoriteCount.value = videoDetail.value.collect ?? videoDetail.value.collect_count ?? 0
 
     // ❌ 不拉播放地址，videoUrl 不赋值
   } catch (err: any) {
@@ -199,50 +197,116 @@ async function handlePlay() {
       showToast('视频ID无效');
       return;
     }
+
+    const canViewVip = userStore.userInfo.can_view_vip_video === 1;
+    const canWatchCoin = userStore.userInfo.can_watch_coin === 1;
+    const isCoinVideo = videoDetail.value?.coin > 0;
+    const isVipVideo = videoDetail.value?.vip;
+    const isFreeVideo = !isVipVideo && !isCoinVideo;
+
+    console.log('canViewVip', canViewVip, 'isVipVideo', isVipVideo, 'canWatchCoin', canWatchCoin, 'unlocked', videoDetail.value?.unlocked);
+
+    // 1. 免费视频，任何人都能看
+    if (isFreeVideo) {
+      const res = await longVideoStore.fetchPlayUrl({
+        video_id: videoId,
+        userId: userStore.uuid || 'guest',
+      });
+      if (!res || !res.url) {
+        showToast('播放地址获取失败，请稍后重试');
+        return;
+      }
+      videoUrl.value = res.url;
+      playerRef.value?.handleFirstPlay();
+      return;
+    }
+
+    // 2. 既不能看VIP也不能看金币，弹VIP弹窗
+    if (!canViewVip && !canWatchCoin) {
+      showVipModal.value = true;
+      return;
+    }
+    // 3. 只能看VIP，遇到金币视频，且未解锁，弹金币购买
+    if (isCoinVideo && !canWatchCoin && !videoDetail.value.unlocked) {
+      showCoinModal.value = true;
+      return;
+    }
+    // 4. 只能看金币，遇到VIP视频，弹VIP弹窗
+    if (isVipVideo && !canViewVip) {
+      showVipModal.value = true;
+      return;
+    }
+
+    // 5. 其他情况直接拉取播放地址
     const res = await longVideoStore.fetchPlayUrl({
       video_id: videoId,
       userId: userStore.uuid || 'guest',
     });
-    videoUrl.value = res.url;
-    playerRef.value?.handleFirstPlay();
-  } catch (err: any) {
-    if (err.code === 403) {
+
+    if (!res || res.code === 403) {
       await showConfirmDialog({
         title: '温馨提示',
-        message: '长视频观看次数已用完，请开通VIP',
+        message: res?.msg || '长视频观看次数已用完，请开通VIP',
         confirmButtonText: '立即开通',
         cancelButtonText: '取消',
         className: 'vip-dialog',
         closeOnClickOverlay: true,
-      }).then(() => {
-        router.push('/vip');
-      });
+      })
+        .then(() => {
+          router.push('/vip');
+        })
+        .catch(() => {
+          console.log('用户取消了开通VIP弹窗');
+        });
       return;
     }
-    console.error('获取播放地址失败', err);
-    showToast(err.msg || '播放失败，请稍后重试');
+
+    if (!res.url) {
+      showToast('播放地址获取失败，请稍后重试');
+      return;
+    }
+
+    videoUrl.value = res.url;
+    playerRef.value?.handleFirstPlay();
+  } catch (err) {
+    showToast('播放失败，请稍后重试');
+  }
+}
+function toggleLike() {
+  likeCount.value += isLiked.value ? -1 : 1;
+  isLiked.value = !isLiked.value;
+  showToast(isLiked.value ? '点赞成功' : '取消点赞');
+
+  // 添加点赞埋点
+  const videoId = Number(route.params.id);
+  if (!isNaN(videoId) && videoId > 0) {
+    trackLongVideoAction({ video_id: videoId, action: isLiked.value ? 'like' : 'unlike' })
+      .then(() => console.log('点赞埋点触发成功'))
+      .catch(err => console.error('点赞埋点触发失败', err));
   }
 }
 
-// 点赞/收藏等业务逻辑
-function toggleLike() {
-  likeCount.value += isLiked.value ? -1 : 1
-  isLiked.value = !isLiked.value
-  showToast(isLiked.value ? '点赞成功' : '取消点赞')
-}
-const isLiked = ref(false)
+const isLiked = ref(false);
 
 function toggleFavorite() {
-  favoriteCount.value += isFavorited.value ? -1 : 1
-  isFavorited.value = !isFavorited.value
-  showToast(isFavorited.value ? '已加入收藏' : '取消收藏')
+  favoriteCount.value += isFavorited.value ? -1 : 1;
+  isFavorited.value = !isFavorited.value;
+  showToast(isFavorited.value ? '已加入收藏' : '取消收藏');
+
+  // 添加收藏埋点
+  const videoId = Number(route.params.id);
+  if (!isNaN(videoId) && videoId > 0) {
+    trackLongVideoAction({ video_id: videoId, action: isFavorited.value ? 'collect' : 'uncollect' })
+      .then(() => console.log('收藏埋点触发成功'))
+      .catch(err => console.error('收藏埋点触发失败', err));
+  }
 }
-const isFavorited = ref(false)
+
+const isFavorited = ref(false);
 
 function goShare() {
-  router.push({ name: 'PromotionShare' })
+  router.push({ name: 'PromotionShare' });
 }
-
 function goBack() {
   const from = sessionStorage.getItem('return-from')
   if (from === 'star') {
@@ -323,22 +387,24 @@ function formatViews(val: number | string): string {
   else return n.toString()
 }
 
-const recommended = ref<RecommendedItem[]>([
-  {
-    id: 1,
-    src: 'https://zh.sydneyssong.net/001/xxx/xxx.m3u8',
-    cover: 'https://dummyimage.com/360x202/333/fff&text=推荐1',
-    title: '标题1',
-    tag: '表表',
-  },
-  {
-    id: 2,
-    src: 'https://zh.sydneyssong.net/001/yyy/yyy.m3u8',
-    cover: 'https://dummyimage.com/360x202/555/fff&text=推荐2',
-    title: '标题2',
-    tag: '表表2',
-  },
-])
+const recommended = ref<RecommendedItem[]>(
+  [
+    {
+      id: 1,
+      src: 'https://zh.sydneyssong.net/001/xxx/xxx.m3u8',
+      cover: 'https://dummyimage.com/360x202/333/fff&text=推荐1',
+      title: '标题1',
+      tag: '表表',
+    },
+    {
+      id: 2,
+      src: 'https://zh.sydneyssong.net/001/yyy/yyy.m3u8',
+      cover: 'https://dummyimage.com/360x202/555/fff&text=推荐2',
+      title: '标题2',
+      tag: '表表2',
+    },
+  ]
+)
 
 onMounted(async () => {
   isRemainingLoading.value = true;
@@ -347,12 +413,44 @@ onMounted(async () => {
   if (idStr) {
     await loadVideoDetail();
   }
-  await userStore.fetchLongVideoRemaining();
+  const videoId = Number(route.params.id);
+  if (!isNaN(videoId) && videoId > 0) {
+    // 进入详情页埋点
+    trackLongVideoAction({ video_id: videoId, action: 'view' })
+      .then(() => console.log('详情页埋点触发成功'))
+      .catch(err => console.error('详情页埋点触发失败', err));
+  }
   isRemainingLoading.value = false;
 
-  // 只对非VIP且次数为0弹窗
-  if (userStore.isVIP) return;
-  if (userStore.longVideoRemaining === 0) {
+  // 细致弹窗逻辑
+  const canViewVip = userStore.userInfo.can_view_vip_video === 1;
+  const canWatchCoin = userStore.userInfo.can_watch_coin === 1;
+  const isCoinVideo = videoDetail.value?.coin > 0;
+  const isVipVideo = videoDetail.value?.vip;
+  const isFreeVideo = !isVipVideo && !isCoinVideo;
+
+  // ★★★ 只加这一段，免费视频不弹窗 ★★★
+  if (isFreeVideo) {
+    return;
+  }
+
+  // 1. 既不能看VIP也不能看金币，弹VIP弹窗
+  if (!canViewVip && !canWatchCoin) {
+    showVipModal.value = true;
+    return;
+  }
+  // 2. 只能看VIP，遇到金币视频，且未解锁，不自动弹窗（让用户自己点）
+  // if (isCoinVideo && !canWatchCoin && !videoDetail.value.unlocked) {
+  //   showCoinModal.value = true;
+  //   return;
+  // }
+  // 3. 只能看金币，遇到VIP视频，弹VIP弹窗
+  if (isVipVideo && !canViewVip) {
+    showVipModal.value = true;
+    return;
+  }
+  // 4. 普通试看用户且次数为0，弹VIP弹窗
+  if (!userStore.isVIP && userStore.longVideoRemaining === 0) {
     showConfirmDialog({
       title: '温馨提示',
       message: '今日试看次数已用完，请开通VIP',
@@ -360,9 +458,13 @@ onMounted(async () => {
       cancelButtonText: '取消',
       className: 'vip-dialog',
       closeOnClickOverlay: true,
-    }).then(() => {
-      router.push('/vip');
-    });
+    })
+      .then(() => {
+        router.push('/vip');
+      })
+      .catch(() => {
+        console.log('用户取消了开通VIP弹窗');
+      });
   }
 })
 
@@ -408,7 +510,8 @@ async function buySingleCoin() {
     })
     showToast('购买成功，已解锁！')
     showCoinModal.value = false
-    await loadVideoDetail()           // 刷新详情
+    videoDetail.value.unlocked = true
+    
     await userStore.fetchUserInfo()   // 刷新余额
   } catch (e) {
     showToast('购买失败，请重试')
@@ -418,6 +521,41 @@ async function buySingleCoin() {
 function goRecharge() {
   router.push({ path: '/vip', query: { tab: 'coin' } })
 }
+
+const isVipCard = computed(() =>
+  userStore.userInfo.can_view_vip_video === 1 && userStore.userInfo.can_watch_coin !== 1
+)
+const isCoinCard = computed(() =>
+  userStore.userInfo.can_watch_coin === 1 && userStore.userInfo.can_view_vip_video !== 1
+)
+const isSuperCard = computed(() =>
+  userStore.userInfo.can_view_vip_video === 1 && userStore.userInfo.can_watch_coin === 1
+)
+const isNormalUser = computed(() =>
+  userStore.userInfo.can_view_vip_video !== 1 && userStore.userInfo.can_watch_coin !== 1
+)
+
+const isVipVideo = computed(() => videoDetail.value?.vip)
+const isCoinVideo = computed(() => videoDetail.value?.coin > 0)
+const isUnlocked = computed(() => videoDetail.value?.unlocked)
+
+const showVipCorner = computed(() =>
+  userStore.userInfo &&
+  !isSuperCard.value &&
+  (
+    (isCoinCard.value && isVipVideo.value) ||
+    (isNormalUser.value && isVipVideo.value)
+  )
+)
+
+const showCoinCorner = computed(() =>
+  userStore.userInfo &&
+  !isSuperCard.value &&
+  (
+    (isVipCard.value && isCoinVideo.value && !isUnlocked.value) ||
+    (isNormalUser.value && isCoinVideo.value && !isUnlocked.value)
+  )
+)
 </script>
 
 <style scoped>

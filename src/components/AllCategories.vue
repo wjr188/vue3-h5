@@ -1,23 +1,20 @@
 <template>
-  <div class="all-categories">
-    <!-- 顶部返回栏 -->
-    <van-nav-bar
-      title="所有分类"
-      left-arrow
-      @click-left="$router.back()"
-      fixed
-      placeholder
-    >
-      <template #right>
-        <div class="topbar-more" @click="showAllTags = true">
-          标签
-          <van-icon name="arrow-down" />
-        </div>
-      </template>
-    </van-nav-bar>
-
-    <!-- 筛选栏容器 吸顶 -->
-    <van-sticky>
+  <van-sticky :offset-top="0">
+    <div class="sticky-bar">
+      <!-- 顶部栏+筛选栏 -->
+      <van-nav-bar
+        title="所有分类"
+        left-arrow
+        @click-left="$router.back()"
+        placeholder
+      >
+        <template #right>
+          <div class="topbar-more" @click="showAllTags = true">
+            标签
+            <van-icon name="arrow-down" />
+          </div>
+        </template>
+      </van-nav-bar>
       <div class="filter-container">
         <div class="filter-row">
           <span class="filter-label">标签</span>
@@ -27,7 +24,7 @@
               v-for="(tag, index) in hotTags"
               :key="index"
               :class="{ active: activeTag === tag }"
-              @click="activeTag = tag"
+              @click="selectTag(tag)"
             >
               {{ tag }}
             </div>
@@ -36,12 +33,13 @@
         <div class="filter-row">
           <span class="filter-label">排序</span>
           <div class="filter-scroll">
+            <!-- 排序 -->
             <div
               class="filter-item"
               v-for="(order, index) in orders"
               :key="index"
               :class="{ active: activeOrder === order }"
-              @click="activeOrder = order"
+              @click="onOrderChange(order)"
             >
               {{ order }}
             </div>
@@ -50,44 +48,58 @@
         <div class="filter-row">
           <span class="filter-label">价格</span>
           <div class="filter-scroll">
+            <!-- 价格 -->
             <div
               class="filter-item"
               v-for="(price, index) in prices"
               :key="index"
               :class="{ active: activePrice === price }"
-              @click="activePrice = price"
+              @click="onPriceChange(price)"
             >
               {{ price }}
             </div>
           </div>
         </div>
       </div>
-    </van-sticky>
-
+    </div>
+  </van-sticky>
+  <div class="all-categories">
+    <!-- 首次加载/筛选时 loading -->
+    <div v-if="!hasLoaded && isLoading" class="loading-tip">
+      <img src="/icons/loading.svg" alt="加载中..." class="custom-spinner" />
+      <div class="loading-text">客官别走，妾身马上就好~</div>
+    </div>
     <!-- 卡片区域 -->
-    <div class="card-list">
+    <div v-show="hasLoaded" class="card-list">
       <div
         class="video-card"
-        v-for="(video, index) in visibleList"
-        :key="index"
+        v-for="(video, idx) in visibleList"
+        :key="video.id + '-' + idx"
+        @click="goToPlay(video)"
       >
         <div class="cover-wrapper">
+          <CardCornerIcon
+            :isVip="video.priceType === 'VIP'"
+            :coinAmount="video.priceType === '金币' ? video.coinAmount || 0 : 0"
+          />
           <img :src="video.cover" class="card-img" />
           <div class="meta">
             <div class="views">
               <img src="/icons/play4.svg" class="play-icon" />
               {{ (video.views / 10000).toFixed(1) }}w
             </div>
-            <div class="duration">{{ video.duration || '00:00' }}</div>
+            <div class="duration">{{ formatDuration(video.duration) }}</div>
           </div>
         </div>
         <div class="card-title">{{ video.title }}</div>
-        <div class="card-tag">{{ video.tag }}</div>
+        <div class="card-tag">{{ video.tags?.[0] || '' }}</div>
+      </div>
+      <div v-if="hasLoaded && !isLoading && visibleList.length === 0" class="no-data-tip">
+        暂无相关视频
       </div>
     </div>
-
-    <!-- 懒加载提示 -->
-    <div v-if="isLoading" class="loading-tip">
+    <!-- 懒加载分页 loading，只在分页加载时出现 -->
+    <div v-if="hasLoaded && isLoading" class="loading-tip">
       <img src="/icons/loading.svg" alt="加载中..." class="custom-spinner" />
       <div class="loading-text">客官别走，妾身马上就好~</div>
     </div>
@@ -113,116 +125,270 @@
         </div>
       </div>
     </van-popup>
+   
   </div>
 </template>
-<script setup lang="ts">
-import { ref, computed, watch } from 'vue'
-import { useLazyLoad } from '@/composables/useLazyLoad'
 
-// ✅ 类型定义
+<script setup lang="ts">
+import CardCornerIcon from './CardCornerIcon.vue'
+import { ref, computed, onMounted, onUnmounted, nextTick, onActivated } from 'vue'
+import { fetchH5AllLongVideos } from '@/api/longVideo.api'
+import { useLongTagStore } from '@/store/longTagStore'
+import { useRouter } from 'vue-router'
+
 interface VideoItem {
+  id: number
   cover: string
   title: string
   views: number
-  duration: string
+  duration: number
   collects: number
-  time: string
-  tag: string
-  priceType?: string
+  tags: string[]
+  priceType: string
 }
 
-// 所有标签
-const tags = ref<string[]>([
-  '全部标签', '女优', '欧美', '国产', '日韩', '另类', '制服', '剧情', '剧情向', '清纯', '激情', '调教', '萝莉', '人妻', '巨乳', '高跟', '黑丝'
-])
+// 状态管理
+const tags = ref<string[]>([])
+const hotTags = computed(() => tags.value.slice(0, 8)) // 只显示前8个标签
+const visibleList = ref<VideoItem[]>([])
+const isLoading = ref(false)
+const noMore = ref(false)
+const sentinel = ref<HTMLElement | null>(null)
+const page = ref(1)
+const pageSize = 20
+let loadingLock = false
 
-const hotTags = computed(() => tags.value.slice(0, 8))
+// 筛选条件
+const orders = ref(['最多观看', '最多收藏', '最新上架'])
+const prices = ref(['全部类型', '免费', 'VIP', '金币'])
+const activeTag = ref('全部标签')
+const activeOrder = ref('最多观看')
+const activePrice = ref('全部类型')
+const showAllTags = ref(false)
+const hasLoaded = ref(false)
+const scrollTop = ref(0)
 
-const orders = ref<string[]>(['最多观看', '最多收藏', '最新上架'])
-const prices = ref<string[]>(['全部类型', '免费', 'VIP', '金币'])
-
-const activeTag = ref<string>('全部标签')
-const activeOrder = ref<string>('最多观看')
-const activePrice = ref<string>('全部类型')
-
-const showAllTags = ref<boolean>(false)
-
-const videos = ref<VideoItem[]>([
-  {
-    cover: 'https://zh.sydneyssong.net/015/08606858fbbf9ff69185f13e8de5c3db/2021101722373843114.webp',
-    title: '极品网红少女...',
-    views: 347000,
-    duration: '10:23',
-    collects: 1000,
-    time: '2024-06-01',
-    tag: '剧情'
-  },
-  {
-    cover: "https://zh.sydneyssong.net/015/08606858fbbf9ff69185f13e8de5c3db/2021101722373843114.webp",
-    title: '5/5高中少女...',
-    views: 959000,
-    duration: '08:45',
-    collects: 500,
-    time: '2024-06-10',
-    tag: '国产'
-  },
-  {
-    cover: '/upload/cover3.jpg',
-    title: '日韩剧情大片...',
-    views: 123000,
-    duration: '12:15',
-    collects: 2000,
-    time: '2024-06-15',
-    tag: '日韩'
+function goToPlay(video: VideoItem) {
+  // 记录实际滚动容器的 scrollTop
+  const wrapper = document.querySelector('.scroll-wrapper')
+  if (wrapper) {
+    scrollTop.value = wrapper.scrollTop
   }
-])
+  router.push(`/play/${video.id}`)
+}
 
-const filteredVideos = ref<VideoItem[]>([])
-
-watch(
-  [activeTag, activeOrder, activePrice],
-  () => {
-    let list = videos.value.slice()
-
-    if (activeTag.value !== '全部标签') {
-      list = list.filter(v => v.tag === activeTag.value)
+onActivated(() => {
+  nextTick(() => {
+    const wrapper = document.querySelector('.scroll-wrapper')
+    if (wrapper) {
+      wrapper.scrollTop = scrollTop.value || 0
     }
-
-    if (activePrice.value !== '全部类型') {
-      list = list.filter(v => v.priceType === activePrice.value)
-    }
-
-    if (activeOrder.value === '最多观看') {
-      list.sort((a, b) => b.views - a.views)
-    } else if (activeOrder.value === '最多收藏') {
-      list.sort((a, b) => b.collects - a.collects)
-    } else if (activeOrder.value === '最新上架') {
-      list.sort((a, b) => new Date(b.time).getTime() - new Date(a.time).getTime())
-    }
-
-    filteredVideos.value = list
-  },
-  { immediate: true }
-)
-
-// 懒加载
-const { visibleList, isLoading, noMore, sentinel } = useLazyLoad(filteredVideos, {
-  batchSize: 12
+  })
+  initObserver()
 })
 
-function selectTag(tag: string) {
-  activeTag.value = tag
-  showAllTags.value = false
+// 初始化
+onMounted(async () => {
+  const longTagStore = useLongTagStore()
+  await longTagStore.loadTags()
+  const sortedTags = (longTagStore.tags || []).slice().sort((a, b) => a.sort - b.sort)
+  tags.value = sortedTags.map(t => t.name)
+  // 只在首次进入时拉数据
+  if (!hasLoaded.value) {
+    await loadVideos(true)
+    hasLoaded.value = true
+  }
+  initObserver()
+})
+
+function getCache(key: string) {
+  const cacheStr = localStorage.getItem('videoCache')
+  if (!cacheStr) return undefined
+  const cache = JSON.parse(cacheStr)
+  return cache[key]
 }
+
+function setCache(key: string, data: any) {
+  const MAX_CACHE = 50
+  let cache = {}
+  const cacheStr = localStorage.getItem('videoCache')
+  if (cacheStr) cache = JSON.parse(cacheStr)
+  cache[key] = data
+  // 控制缓存数量
+  const keys = Object.keys(cache)
+  if (keys.length > MAX_CACHE) {
+    delete cache[keys[0]]
+  }
+  localStorage.setItem('videoCache', JSON.stringify(cache))
+}
+
+// 核心数据加载
+async function loadVideos(reset = false) {
+  if (loadingLock) return;
+  loadingLock = true;
+
+  if (reset) {
+    page.value = 1;
+    visibleList.value = [];
+    noMore.value = false;
+    hasLoaded.value = false; // 重置加载状态
+  }
+
+  isLoading.value = true;
+  try {
+    // 关键：每种筛选条件都生成唯一 key
+    const params = {
+      page: page.value,
+      pageSize,
+      sort: activeOrder.value,
+      priceType: activePrice.value,
+      tag: activeTag.value
+    }
+    const cacheKey = JSON.stringify(params)
+    let res = getCache(cacheKey)
+    if (!res) {
+      res = await fetchH5AllLongVideos({
+        page: page.value,
+        pageSize,
+        sort: activeOrder.value === '最多观看' ? 'play' : 
+              activeOrder.value === '最多收藏' ? 'collect' : 'new',
+        priceType: activePrice.value === 'VIP' ? 'VIP' :
+                  activePrice.value === '金币' ? '金币' :
+                  activePrice.value === '免费' ? '免费' : undefined,
+        tag: activeTag.value !== '全部标签' ? activeTag.value : undefined
+      });
+      setCache(cacheKey, res)
+    }
+
+    const newVideos = (res.list || []).map(item => ({
+      id: item.id,
+      cover: item.cover_url,
+      title: item.title,
+      views: item.play,
+      duration: item.duration,
+      collects: item.collect,
+      tags: item.tags || [],
+      priceType: item.coin > 0 ? '金币' : item.vip ? 'VIP' : 'free',
+      coinAmount: item.coin || 0
+    }));
+
+    visibleList.value = [...visibleList.value, ...newVideos];
+    page.value++;
+    if (newVideos.length < pageSize) {
+      noMore.value = true;
+    }
+  } finally {
+    isLoading.value = false;
+    loadingLock = false;
+    hasLoaded.value = true; // 接口回来的时候才设置 true
+  }
+}
+
+// 修复后的懒加载观察器
+let observer: IntersectionObserver | null = null;
+
+function initObserver() {
+  if (!sentinel.value || noMore.value) return;
+
+  if (observer) {
+    observer.disconnect();
+  }
+
+  observer = new IntersectionObserver(
+    (entries) => {
+      // 增加 noMore 判断
+      if (entries[0].isIntersecting && !isLoading.value && !noMore.value) {
+        loadVideos();
+      }
+    },
+    {
+      root: null,
+      rootMargin: '400px',
+      threshold: 0.1
+    }
+  );
+
+  observer.observe(sentinel.value);
+}
+
+function destroyObserver() {
+  observer?.disconnect();
+  observer = null;
+}
+
+// 筛选处理
+async function handleFilterChange() {
+  destroyObserver();
+  await loadVideos(true);
+  initObserver();
+}
+
+// 事件处理
+async function onOrderChange(order: string) {
+  if (activeOrder.value === order) return;
+  activeOrder.value = order;
+  await handleFilterChange();
+}
+
+async function onPriceChange(price: string) {
+  if (activePrice.value === price) return;
+  activePrice.value = price;
+  await handleFilterChange();
+}
+
+async function selectTag(tag: string) {
+  activeTag.value = activeTag.value === tag ? '全部标签' : tag;
+  showAllTags.value = false;
+  await handleFilterChange();
+}
+
+function formatDuration(seconds: number): string {
+  if (!seconds || isNaN(seconds)) return '00:00';
+  const min = Math.floor(seconds / 60);
+  const sec = seconds % 60;
+  const minStr = min < 10 ? '0' + min : '' + min;
+  const secStr = sec < 10 ? '0' + sec : '' + sec;
+  return `${minStr}:${secStr}`;
+}
+
+const router = useRouter()
+
+
+
+
+
+
+onUnmounted(() => {
+  destroyObserver();
+});
 </script>
+
 <style scoped>
+
+.van-sticky,
+.van-sticky--fixed {
+  /* 不设置 height/min-height，让内容自适应 */
+}
+
+.filter-container {
+  margin-top: 0 !important;
+  padding-top: 0 !important;
+}
+
+::v-deep(.van-nav-bar) {
+  border-bottom: none !important;
+  box-shadow: none !important;
+  margin-bottom: 0 !important;
+}
+
 .all-categories {
-  background: #f5f5f5;
+  background: #fff;
 }
 .filter-container {
   background: #fff;
   border-bottom: 0.26vw solid #eee;
 }
+
 .filter-row {
   display: flex;
   align-items: center;
@@ -279,7 +445,7 @@ function selectTag(tag: string) {
 }
 .video-card {
   width: 48%;
-  background: #fff;
+  background: rgb(240, 240, 240);
   margin: 1%;
   border-radius: 1.6vw;
   overflow: hidden;
@@ -336,7 +502,7 @@ function selectTag(tag: string) {
   font-size: 3.2vw;
   color: #fff;
   background: #f12c2c;
-  border-radius: 5vw;
+  border-radius: 1vw;
   padding: 0.5vw 2.6vw;
   margin: 1vw 0 1vw 1vw;
   align-self: flex-start;
@@ -370,8 +536,8 @@ function selectTag(tag: string) {
   margin: 5.3vw 0;
 }
 .load-more-trigger {
-  height: 13vw;
-  margin-top: 5.3vw;
+  height: 1px;
+  margin-top: 0;
 }
 
 /* 弹窗 */
@@ -392,7 +558,7 @@ function selectTag(tag: string) {
 .popup-tag {
   padding: 1.5vw 3.2vw;
   background: #eee;
-  border-radius: 5vw;
+  border-radius: 1vw;
   cursor: pointer;
   font-size: 3.6vw;
 }
@@ -410,5 +576,18 @@ function selectTag(tag: string) {
 ::v-deep(.van-icon-arrow-left) {
   font-size: 6.9vw !important;
   color: #333 !important;
+}
+.no-data-tip {
+  text-align: center;
+  color: #999;
+  font-size: 3.6vw;
+  margin: 10vw 0;
+}
+
+.sticky-bar {
+  background: #fff;
+  box-sizing: border-box;
+  z-index: 10;
+  overflow: hidden;
 }
 </style>

@@ -28,7 +28,7 @@
     <img
       v-else
       class="video-poster"
-      :src="props.poster"
+      v-lazy="props.poster"
       @click.stop="emit('requestPlay')"
       style="width:100%;height:100%;object-fit:contain;cursor:pointer;"
     />

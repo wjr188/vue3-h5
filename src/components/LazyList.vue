@@ -2,6 +2,7 @@
   <div class="lazy-list-container">
     <div v-for="(item, index) in visibleListInternal" :key="index">
       <slot :item="item" />
+      <span class="duration" style="float:right;">{{ formatDuration(item.duration) }}</span>
     </div>
 
     <div v-if="loading" class="loading-tip">
@@ -222,6 +223,14 @@ watch(
   },
   { deep: false } // 对于数组引用变化，不需要深度监听
 );
+
+function formatDuration(sec: number | string | undefined): string {
+  const s = Number(sec)
+  if (isNaN(s) || s <= 0) return '00:00'
+  const m = Math.floor(s / 60)
+  const ss = s % 60
+  return `${m.toString().padStart(2, '0')}:${ss.toString().padStart(2, '0')}`
+}
 </script>
 
 <style scoped>

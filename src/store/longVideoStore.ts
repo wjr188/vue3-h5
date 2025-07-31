@@ -4,6 +4,7 @@ import {
   fetchLongVideoList,
   fetchLongVideoDetail,
   playLongVideo,
+  fetchH5AllLongVideos,
 } from "@/api/longVideo.api";
 import { unlockLongVideo } from '@/api/unlock.api'
 
@@ -13,16 +14,41 @@ export const useLongVideoStore = defineStore("longVideo", {
     total: 0,
     loading: false,
     detail: null as any,
-    playUrl: "",       // 播放地址
-    // 新增：主分类缓存
-    cache: {} as Record<number, {
+    playUrl: "",
+    cache: {} as Record<number, Record<string, {
       list: any[];
       total: number;
       lastPage: number;
       hasMore: boolean;
+    }>>,
+    videoCache: {} as Record<number, any[]>, // 小分类视频缓存
+    // 新增：主分类分页及子分类缓存
+    categoryStates: {} as Record<string, {
+      data: any[];
+      page: number;
+      hasMore: boolean;
+      isLoading: boolean;
     }>,
+    // 新增：主分类下所有子分类的视频缓存
+    videoBasicData: {} as Record<number, any[]>
   }),
   actions: {
+    // 获取/初始化主分类状态
+    getCategoryState(name: string) {
+      if (!this.categoryStates[name]) {
+        this.categoryStates[name] = {
+          data: [],
+          page: 1,
+          hasMore: true,
+          isLoading: false
+        }
+      }
+      return this.categoryStates[name]
+    },
+    // 设置主分类下子分类的视频
+    setVideoBasicData(categoryId: number, videos: any[]) {
+      this.videoBasicData[categoryId] = videos
+    },
     /**
      * 加载视频列表
      */
@@ -43,8 +69,7 @@ export const useLongVideoStore = defineStore("longVideo", {
       this.loading = true;
       try {
         const res = await fetchLongVideoList({ ...params, page, pageSize });
-      
-        const newItems = (res.list || []).map((item) => ({
+        const newItems = (res?.list || []).map((item) => ({
           id: item.id,
           title: item.title,
           cover: item.cover_url,
@@ -58,30 +83,27 @@ export const useLongVideoStore = defineStore("longVideo", {
           vip: item.vip,
           coin: item.coin,
           goldCoins: item.goldCoins,
-          play: item.play, // 加上这一行！
-          sort: item.sort, // 视频自己的排序
-          categorySort: item.categorySort ?? item.category_sort, // 子分类的排序
-          // 👇👇👇加这一行！！！
+          play: item.play,
+          sort: item.sort,
+          categorySort: item.categorySort ?? item.category_sort,
           icon: item.category_icon || '',
         }));
 
         if (page === 1) {
-          // 新主分类，重置缓存
           this.cache[parent_id] = {
             list: newItems,
-            total: res.total || 0,
+            total: res?.total || 0,
             lastPage: page,
-            hasMore: (res.list || []).length >= pageSize,
+            hasMore: newItems.length >= pageSize,
           };
           this.list = newItems;
         } else {
-          // 追加
           this.cache[parent_id].list = [
             ...this.cache[parent_id].list,
             ...newItems,
           ];
           this.cache[parent_id].lastPage = page;
-          this.cache[parent_id].hasMore = (res.list || []).length >= pageSize;
+          this.cache[parent_id].hasMore = newItems.length >= pageSize;
           this.list = this.cache[parent_id].list;
         }
         this.total = this.cache[parent_id].total;
@@ -116,7 +138,8 @@ export const useLongVideoStore = defineStore("longVideo", {
       this.loading = true;
       try {
         if (typeof data.video_id !== "number" || isNaN(data.video_id) || data.video_id <= 0) {
-          throw new Error(`无效的视频ID: ${data.video_id}`);
+          console.error(`无效的视频ID: ${data.video_id}`);
+          return null; // 返回默认值，避免抛出异常
         }
         const payload = {
           video_id: data.video_id,
@@ -125,9 +148,18 @@ export const useLongVideoStore = defineStore("longVideo", {
         const res = await playLongVideo(payload);
         this.playUrl = res.url;
         return res;
-      } catch (error) {
+      } catch (error: any) {
         console.error("获取播放地址失败", error);
-        throw error;
+
+        // 处理 403 错误
+        if (error.code === 403) {
+          console.warn("权限不足，用户需要开通VIP");
+          return { code: 403, msg: error.msg || '权限不足' }; // 返回一个标识错误的对象
+        }
+
+        // 记录其他错误
+        console.warn("其他错误:", error);
+        return null; // 返回默认值，避免未捕获的 Promise rejection
       } finally {
         this.loading = false;
       }
@@ -146,12 +178,45 @@ export const useLongVideoStore = defineStore("longVideo", {
     async buySingleVideo({ videoId, coin }: { videoId: number; coin: number }) {
       try {
         await unlockLongVideo({ video_id: videoId, coin })
-        // 解锁成功后可选：刷新详情或状态
         await this.loadDetail(videoId)
         return true
       } catch (e) {
-        // 这里可以根据后端返回的错误信息做提示
         throw e
+      }
+    },
+
+    /**
+     * 换一批：加载某个子分类下的视频（支持分页）
+     */
+    async loadH5CategoryVideos(categoryId: number, page = 1, pageSize = 6) {
+      this.loading = true;
+      try {
+        const res = await fetchH5AllLongVideos({ category_id: categoryId, page, pageSize, random: 1 });
+        const list = res?.list || [];
+        this.list = list;
+        this.total = res?.total || 0;
+        return list;
+      } finally {
+        this.loading = false;
+      }
+    },
+
+    // 新增分批加载主分类+子分类+视频列表
+    async loadH5CategoryBatch(params: { parent_id: number; page: number }) {
+      this.loading = true;
+      try {
+        const res = await fetchLongVideoList(params);
+        // 直接返回 categories，分页信息
+        return {
+          categories: res?.categories || [],
+          total: res?.total || 0,
+          current_page: res?.current_page || 1,
+          total_pages: res?.total_pages || 1,
+          per_page: res?.per_page || 3,
+          parent: res?.parent || null
+        };
+      } finally {
+        this.loading = false;
       }
     },
   },

@@ -1,6 +1,6 @@
 <template>
   <div class="normal-category" :class="{ dark: isDarknet }" ref="scrollContainer">
-    <div class="category-block" v-for="(category, cIndex) in sortedVisibleList" :key="cIndex">
+    <div class="category-block" v-for="category in categoryList" :key="category.id">
       <div class="block-title-row">
         <div class="block-title">
           <img
@@ -13,240 +13,114 @@
         </div>
         <div class="block-more" @click="onGoToMore(category.name)">➤</div>
       </div>
-
-     <div class="sub-images">
-  <div
-    v-for="video in (props.videoBasicData[category.id] || [])
-    .slice()
-    .sort((a, b) => (a.sort ?? 0) - (b.sort ?? 0))"
-    :key="video.id"
-    class="sub-card"
-    @click="logAndGoToPlay(video)"
-  >
-  <div class="video-card">
-    <div class="cover-wrapper">
-  <img :src="video.cover" class="sub-image" />
-  <CardCornerIcon :isVip="video.vip" :coinAmount="video.coin" />
-
-
-      <div class="meta">
-        <!-- 左下角：播放量 -->
-        <span class="views" style="float:left;">
-          <img src="/icons/play4.svg" style="width:14px;height:14px;vertical-align:middle;margin-right:2px;" />
-          {{ formatPlayCount(video.play ?? 0) }}
-        </span>
-        <!-- 右下角：时长 -->
-        <span class="duration" style="float:right;">
-          {{ formatDuration(video.duration) }}
-        </span>
+      <div class="sub-images">
+        <div
+          v-for="video in getVideoList(category.id)"
+          :key="video.id"
+          class="sub-card"
+          @click="logAndGoToPlay(video)"
+        >
+          <div class="video-card">
+            <div class="cover-wrapper">
+              <img :src="video.cover_url || video.cover" class="sub-image" />
+              <CardCornerIcon :isVip="video.vip" :coinAmount="video.coin" />
+              <div class="meta">
+                <span class="views">
+                  <img src="/icons/play4.svg" style="width:14px;height:14px;vertical-align:middle;margin-right:2px;" />
+                  {{ formatPlayCount(video.play ?? 0) }}
+                </span>
+                <span class="duration">{{ formatDuration(video.duration) }}</span>
+              </div>
+            </div>
+            <div class="title">{{ video.title }}</div>
+            <span v-if="video.tags && video.tags.length" class="tag-badge">
+              {{ video.tags[0] }}
+            </span>
+            <span v-else class="tag-badge" style="visibility: hidden;">占位</span>
+          </div>
+        </div>
       </div>
-    </div>
-    <div class="title">{{ video.title }}</div>
-    <span v-if="video.tags && video.tags.length" class="tag-badge">
-      {{ video.tags[0] }}
-    </span>
-    <span v-else class="tag-badge" style="visibility: hidden;">
-      占位
-    </span>
-  </div>
-</div>
-</div>
       <div class="action-buttons">
         <button class="btn outline" @click="onGoToMore(category.name)">
           <img src="/static/more1.png" class="btn-icon" /> 查看更多
         </button>
-        <button class="btn outline" @click="shuffle(category.name, category.subImages)">
+        <button class="btn outline" @click="emit('refresh', category.id)">
           <img src="/static/refresh1.png" class="btn-icon" /> 更换一批
         </button>
       </div>
     </div>
-
-    <div v-if="isLoading" class="loading-tip">
-      <img src="/icons/loading.svg" class="spinner" />
-      <div class="loading-text">客官别走，妾身马上就好~</div>
-    </div>
-
-    <div v-if="noMore" class="end-bar">客官，妾身被你弄高潮了，扛不住了~</div>
-
-    <div ref="sentinel" class="load-more-trigger"></div>
   </div>
 </template>
+
 <script setup lang="ts">
 import CardCornerIcon from './CardCornerIcon.vue'
 import { useRoute, useRouter } from 'vue-router'
-import { ref, watch, computed, nextTick, onActivated } from 'vue'
-import { useLazyLoad } from '@/composables/useLazyLoad'
+import { ref, watch, computed, nextTick, onMounted, onBeforeUnmount, onActivated } from 'vue'
+import { useCategoryUIStore } from '@/store/ui/longVideo/categoryUI.store'
 
-// 定义类型
-interface SubImageItem {
-  cover: string
-  src: string
-  title: string
-  tag?: string
-  views?: number
-  duration?: string
-}
-
-interface CategoryItem {
-  id: number
-  name: string
-  sort: number
-  icon?: string
-  subImages?: SubImageItem[]
-}
-
-// emits
 const emit = defineEmits<{
-  (e: 'clickItem', payload: { cover: string; src: string; title: string; tag?: string }): void
+  (e: 'clickItem', payload: any): void
   (e: 'goToMore', name: string): void
+  (e: 'refresh', categoryId: number): void
 }>()
 
-// props
 const props = defineProps<{
-  categoryList: CategoryItem[]
+  categoryList: any[]
   categoryName: string
-  videoBasicData: Record<number, { id: number, title: string, cover: string, play?: number, tags?: string[] }[]>
+  videoBasicData: Record<number, any[]>
   dark?: boolean
 }>()
 
-// route
 const route = useRoute()
 const router = useRouter()
+const isDarknet = computed(() => props.dark === true || route.meta.isDarknet === true || route.path.includes('darknet'))
 
-// dark mode
-const isDarknet = computed(() => {
-  return props.dark === true || route.meta.isDarknet === true || route.path.includes('darknet')
-})
-
-// all data
-const allList = ref<CategoryItem[]>([])
-
-// scroll container
+// 滚动位置用 Pinia 存储（可选）
 const scrollContainer = ref<HTMLElement | null>(null)
+const categoryUIStore = useCategoryUIStore()
+const categoryKey = props.categoryName
+categoryUIStore.initPageState(categoryKey)
 
-// lazy load
-const {
-  visibleList,
-  isLoading,
-  noMore,
-  sentinel,
-  loadUntil
-} = useLazyLoad<CategoryItem>(allList, {
-  batchSize: 2,
-  namespace: 'normal-category',
-  uniqueProps: {
-    page: `normal-category-${route.path}`
-  },
-  customScrollRoot: scrollContainer
-})
-
-// shuffled map
-const shuffledMap = ref<Record<string, SubImageItem[]>>({})
-
-function shuffle(name: string, subImages: SubImageItem[]) {
-  shuffledMap.value[name] = [...subImages]
-    .map(v => ({ ...v }))
-    .sort(() => Math.random() - 0.5)
-    .slice(0, 6)
-}
-
-function initShuffle(list: CategoryItem[]) {
-  const result: Record<string, SubImageItem[]> = {}
-  for (const category of list) {
-    // 保证 subImages 一定是数组
-    const subImages = Array.isArray(category.subImages) ? category.subImages : [];
-    result[category.name] = [...subImages]
-      .map(v => ({ ...v }))
-      .sort(() => Math.random() - 0.5)
-      .slice(0, 6)
-  }
-  shuffledMap.value = result
-}
-
-// watch for changes
-watch(
-  () => props.categoryList,
-  (val) => {
-    
-    if (!val || val.length === 0) return
-    allList.value = val
-    initShuffle(val)
-  },
-  { immediate: true }
-)
-
-const sortedVisibleList = computed(() => {
-  return [...visibleList.value].sort((a, b) => (a.sort ?? 0) - (b.sort ?? 0));
-});
-
-// emits
-function emitClick(cover: string, src: string, title: string, tag?: string) {
-  emit('clickItem', { cover, src, title, tag })
-}
-
-function onGoToMore(name: string) {
-  emit('goToMore', name)
-}
-
-// scroll key
-const getScrollKey = () => `normal-category-scroll-${route.path}`
-
-// record scroll
 function recordScroll() {
   if (scrollContainer.value) {
-    const top = scrollContainer.value.scrollTop
-    sessionStorage.setItem(getScrollKey(), top.toString())
+    categoryUIStore.setScrollTop(categoryKey, scrollContainer.value.scrollTop)
   }
 }
-
-// restore scroll
 function restoreScroll() {
-  const saved = sessionStorage.getItem(getScrollKey())
-  if (saved && scrollContainer.value) {
-    const wantScroll = parseInt(saved, 10)
-    let tryCount = 0
-    let lastHeight = 0
-    function tryRestore() {
-      if (!scrollContainer.value) return
-      const nowH = scrollContainer.value.scrollHeight
-      if (nowH !== lastHeight && nowH > 0) {
-        scrollContainer.value.scrollTop = wantScroll
-        lastHeight = nowH
-      }
-      tryCount++
-      if (tryCount < 20) setTimeout(tryRestore, 40)
-    }
-    tryRestore()
-  }
-}
-
-// restore on activate
-onActivated(async () => {
-  await loadUntil(0)
-  await nextTick()
-  restoreScroll()
-})
-
-function goToPlay(video: { id: number; title: string; cover: string }) {
-  if (!video || !video.id) {
-    console.error('goToPlay: 缺少视频ID', video)
-    return
-  }
-  router.push({
-    name: 'PlayPage',
-    params: { id: video.id },
-    query: {
-      title: video.title,
-      cover: video.cover
+  nextTick(() => {
+    if (scrollContainer.value) {
+      scrollContainer.value.scrollTop = categoryUIStore.pageStates[categoryKey]?.scrollTop ?? 0
     }
   })
 }
+onMounted(() => {
+  scrollContainer.value?.addEventListener('scroll', recordScroll)
+  restoreScroll()
+})
+onBeforeUnmount(() => {
+  scrollContainer.value?.removeEventListener('scroll', recordScroll)
+})
+onActivated(() => {
+  restoreScroll()
+})
 
-function logAndGoToPlay(video: { id: number; title: string; cover: string }) {
-  
-  goToPlay(video)
+// 内容渲染
+function getVideoList(categoryId: number) {
+  const apiList = props.videoBasicData[categoryId]
+  if (apiList && apiList.length > 0) {
+    return apiList.map(v => ({
+      ...v,
+      cover: v.cover || v.cover_url
+    })).sort((a, b) => (a.sort ?? 0) - (b.sort ?? 0))
+  }
+  return []
 }
-
+function onGoToMore(name: string) {
+  emit('goToMore', name)
+}
+function logAndGoToPlay(video: any) {
+  emit('clickItem', video)
+}
 function formatDuration(sec: number | string | undefined): string {
   const s = Number(sec)
   if (isNaN(s) || s <= 0) return '00:00'
@@ -254,19 +128,17 @@ function formatDuration(sec: number | string | undefined): string {
   const ss = s % 60
   return `${m.toString().padStart(2, '0')}:${ss.toString().padStart(2, '0')}`
 }
-
 function formatPlayCount(count: number): string {
   if (count >= 100000) {
     return (count / 10000).toFixed(1).replace(/\.0$/, '') + 'w'
   } else if (count >= 1000) {
     return (count / 1000).toFixed(1).replace(/\.0$/, '') + 'k'
   } else {
-    return (count / 1000).toFixed(1).replace(/\.0$/, '') + 'k'
+    return count.toString()
   }
 }
-
-
 </script>
+
 <style scoped>
 .normal-category {
   padding-bottom: 3.2vw; /* 12px */
@@ -489,10 +361,34 @@ function formatPlayCount(count: number): string {
   padding: 0;
   border-radius: 1vw;
   overflow: hidden;
-  background: #f5f4f4;
+  background:rgb(240, 240, 240);
   box-shadow: 0 0 2vw rgba(0, 0, 0, 0.05);
 }
 
-
-
+.vip-corner {
+  position: absolute;
+  top: 0.5vw;
+  right: 0.5vw;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+}
+.coin-tag {
+  display: flex;
+  align-items: center;
+  background: rgba(0,0,0,0.7);
+  color: #fff;
+  border-radius: 1vw;
+  padding: 0.2vw 1vw;
+  font-size: 2.4vw;
+}
+.coin-icon {
+  width: 18px;
+  height: 18px;
+  margin-left: 2px;
+}
+.vip-img {
+  width: 32px;
+  height: 18px;
+}
 </style>
