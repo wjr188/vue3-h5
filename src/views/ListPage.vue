@@ -31,35 +31,64 @@
       touchable
     >
       <van-swipe-item v-for="(tab, tabIndex) in tabs" :key="tab">
-        <div class="video-list">
+        <div class="swipe-item-container">
+          <div class="video-list">
+            <div
+              class="video-card"
+              v-for="item in tabStates[tabIndex].list"
+              :key="item.id"
+              @click="goToPlay(item)"
+            >
+              <div class="thumb-wrap">
+                <img :src="item.cover" class="cover" />
+                <!-- 右上角VIP/金币角标 -->
+                <CardCornerIcon
+                  :isVip="item.vip"
+                  :coinAmount="item.coin"
+                />
+                <div class="video-info-bar">
+                  <span class="views">
+                    <svg width="3.7vw" height="3.7vw" style="vertical-align:-0.5vw;"><use xlink:href="#icon-play" /></svg>
+                    {{ formatPlayCount(item.play) }}
+                  </span>
+                  <span class="duration">{{ formatDuration(item.duration) }}</span>
+                </div>
+              </div>
+              <div class="desc-box">
+                <div class="video-title">{{ item.title }}</div>
+                <div class="card-bottom">
+                  <!-- 只显示第一个标签 -->
+                  <span
+                    class="tag"
+                    v-if="item.tags && item.tags.length"
+                  >{{ item.tags[0] }}</span>
+                </div>
+              </div>
+            </div>
+          </div>
+          
+          <!-- 加载状态提示 - 使用当前tab的状态 -->
+          <!-- 懒加载触发点 -->
           <div
-            class="video-card"
-            v-for="item in sortedVideoList"
-            :key="item.id"
-            @click="goToPlay(item)"
-          >
-            <div class="thumb-wrap">
-              <img :src="item.cover" class="cover" />
-              <div class="video-info-bar">
-                <span class="views">
-                  <svg width="3.7vw" height="3.7vw" style="vertical-align:-0.5vw;"><use xlink:href="#icon-play" /></svg>
-                  {{ item.views || '62.6w' }}
-                </span>
-                <span class="duration">{{ item.duration || '11:59' }}</span>
-              </div>
-            </div>
-            <div class="desc-box">
-              <div class="video-title">{{ item.title }}</div>
-              <div class="card-bottom">
-                <span class="tag" v-if="item.tag">{{ item.tag }}</span>
-              </div>
-            </div>
+            v-if="tabStates[tabIndex].hasMore && !tabStates[tabIndex].loading"
+            ref="setSentinel(tabIndex)"
+            class="load-more-trigger"
+          ></div>
+          <div v-if="tabStates[tabIndex].loading" class="loading-tip">
+            <img src="/icons/loading.svg" alt="加载中..." class="custom-spinner" />
+            <div class="loading-text">客官别走，妾身马上就好~</div>
+          </div>
+          <div v-if="!tabStates[tabIndex].hasMore && tabStates[tabIndex].list.length > 0" class="no-more-text">
+            客官，妾身被你看光了，扛不住了~
+          </div>
+          <div v-if="tabStates[tabIndex].inited && tabStates[tabIndex].list.length === 0 && !tabStates[tabIndex].loading" class="empty-data-message">
+            <p>该分类暂无视频数据或数据加载失败...</p>
           </div>
         </div>
       </van-swipe-item>
     </van-swipe>
 
-    <!-- SVG icons，建议抽成全局组件或引入iconfont，下面写法仅演示！ -->
+    <!-- SVG icons -->
     <svg style="display:none">
       <symbol id="icon-play" viewBox="0 0 1024 1024"><path fill="#fff" d="M512 0C229.23 0 0 229.23 0 512s229.23 512 512 512 512-229.23 512-512S794.77 0 512 0zm208.94 524.09L418.15 692.65c-16.4 11.3-38.15-0.13-38.15-20.56V351.91c0-20.43 21.75-31.86 38.15-20.56l302.79 168.56c16.4 11.3 16.4 29.83 0 40.18z"/></symbol>
       <symbol id="icon-comment" viewBox="0 0 1024 1024"><path fill="#bbb" d="M512 80c-238.8 0-432 150.3-432 336 0 70.5 32.5 135.7 87.5 188-11.6 53.8-37.2 117.4-60.8 153.8-4.3 6.5 1.3 15.2 9.1 13.3C181.2 753.7 252.7 737.7 286.9 730.2c65.8 31.1 145.2 49.8 233.1 49.8 238.8 0 432-150.3 432-336S750.8 80 512 80z"/></symbol>
@@ -68,10 +97,14 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, onMounted, onBeforeUnmount, nextTick, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { fetchLongVideoByCategory } from '@/api/longVideo.api'
-import 'vant/lib/index.css'
+import { fetchRecommendGroupVideos } from '@/api/h5LongVideo.api'
+import { useLongVideoStore } from '@/store/longVideoStore'
+import { useH5LongVideoStore } from '@/store/h5LongVideo.store'
+import CardCornerIcon from '@/components/CardCornerIcon.vue'
+import { useLazyLoad } from '@/composables/useLazyLoad'
 
 const route = useRoute()
 const router = useRouter()
@@ -79,87 +112,302 @@ const swipeRef = ref()
 const currentCategory = computed(() => route.query.cat || '栏目名')
 const tabs = ['最多收藏', '最多观看', '最新上架']
 const activeTab = ref<number>(0)
-const videoList = ref<any[]>([])
-const page = ref(1)
+
+// 删除原来的videoList、page、hasMore、loading
+// 为每个tab创建独立的状态
+const tabStates = ref([
+  { loading: false, hasMore: true, page: 1, list: [], inited: false, scrollTop: 0 },
+  { loading: false, hasMore: true, page: 1, list: [], inited: false, scrollTop: 0 },
+  { loading: false, hasMore: true, page: 1, list: [], inited: false, scrollTop: 0 }
+])
+
 const pageSize = 20
 const categoryId = Number(route.query.categoryId)
-const cacheKey = `list-data-${categoryId}`
+const groupId = route.query.groupId
 
-// 1. 页面加载时优先读缓存
+const longVideoStore = useLongVideoStore()
+const h5LongVideoStore = useH5LongVideoStore()
+
+const debounce = (func: Function, delay: number) => {
+  let timer: any = null
+  return (...args: any[]) => {
+    if (timer) clearTimeout(timer)
+    timer = setTimeout(() => {
+      func.apply(this, args)
+    }, delay)
+  }
+}
+
+// 修改检查滚动函数，使用当前tab的状态
+const checkScrollBottom = () => {
+  if (route.query.type === 'recommend') return false
+  const currentTab = tabStates.value[activeTab.value]
+  if (currentTab.loading || !currentTab.hasMore) return false
+  const el = document.querySelector('.swipe-content')
+  if (!el) return false
+  const threshold = 200
+  return el.scrollTop + el.clientHeight >= el.scrollHeight - threshold
+}
+
+const handleScroll = debounce(() => {
+  if (checkScrollBottom()) {
+    loadMore(activeTab.value)
+  }
+}, 200)
+
+function addScrollListener() {
+  const el = document.querySelector('.swipe-content')
+  if (el) {
+    el.addEventListener('scroll', handleScroll)
+  }
+}
+
+function removeScrollListener() {
+  const el = document.querySelector('.swipe-content')
+  if (el) {
+    el.removeEventListener('scroll', handleScroll)
+  }
+}
+
 onMounted(async () => {
-  // 滚动恢复
+  // 滚动、tab、分页恢复
   const from = sessionStorage.getItem('return-from')
   const scroll = sessionStorage.getItem('return-scroll')
-  if (from === 'list' && scroll) {
-    setTimeout(() => { window.scrollTo({ top: parseInt(scroll), behavior: 'auto' }) }, 50)
+  const tab = sessionStorage.getItem('return-tab')
+  const page = sessionStorage.getItem('return-page')
+
+  if (from === 'list') {
+    if (tab) activeTab.value = parseInt(tab)
+    if (page) tabStates.value[activeTab.value].page = parseInt(page)
+    // 恢复内部容器的滚动位置
+    nextTick(() => {
+      const el = document.querySelector('.swipe-content') as HTMLElement
+      if (el && scroll) {
+        el.scrollTop = parseInt(scroll)
+      }
+    })
     sessionStorage.removeItem('return-from')
     sessionStorage.removeItem('return-scroll')
-    sessionStorage.removeItem('return-cat')
+    sessionStorage.removeItem('return-tab')
+    sessionStorage.removeItem('return-page')
   }
 
-  // 强制清理缓存
-  sessionStorage.removeItem(`list-data-${categoryId}`)
+  const cacheKey = groupId ? Number(groupId) : categoryId
+  tabs.forEach((tab, idx) => {
+    const tabKey = getTabKey(idx)
+    if (
+      longVideoStore.cache[cacheKey] &&
+      longVideoStore.cache[cacheKey][tabKey] &&
+      longVideoStore.cache[cacheKey][tabKey].list.length > 0
+    ) {
+      const cacheData = longVideoStore.cache[cacheKey][tabKey]
+      tabStates.value[idx].list = [...cacheData.list]
+      tabStates.value[idx].page = cacheData.lastPage
+      tabStates.value[idx].hasMore = cacheData.hasMore
+      tabStates.value[idx].inited = true
+    }
+  })
 
-  if (categoryId) {
-    const res = await fetchLongVideoByCategory(categoryId, { page: page.value, pageSize })
-    videoList.value = (res.list || []).map(item => ({
-      ...item,
-      cover: item.cover || item.cover_url
-    }))
-    sessionStorage.setItem(cacheKey, JSON.stringify(videoList.value))
+  // 👇 恢复分页后自动补齐数据
+  if (!tabStates.value[activeTab.value].inited) {
+    // 如果 page > 1，循环加载到目标页
+    for (let i = 1; i < tabStates.value[activeTab.value].page; i++) {
+      await loadTabData(activeTab.value, true)
+    }
+    await loadTabData(activeTab.value)
   }
+
+  addScrollListener()
 })
 
-// 2. 分页加载更多时
-async function loadMore() {
-  page.value += 1
-  const res = await fetchLongVideoByCategory(categoryId, { page: page.value, pageSize })
-  const newList = (res.list || []).map(item => ({
-    ...item,
-    cover: item.cover || item.cover_url
-  }))
-  videoList.value = [...videoList.value, ...newList]
-  sessionStorage.setItem(`list-data-${categoryId}`, JSON.stringify(videoList.value))
+// 为每个tab单独加载数据
+async function loadTabData(tabIndex: number, isLoadMore = false) {
+  const state = tabStates.value[tabIndex]
+  if (state.loading) return
+
+  state.loading = true
+  try {
+    const page = isLoadMore ? state.page + 1 : 1
+    const sort = getSortByTab(tabIndex)
+
+    let res
+    if (groupId) {
+      console.log('ListPage groupId:', groupId)
+      res = await fetchRecommendGroupVideos(Number(groupId), { page, pageSize, sort })
+    } else if (categoryId) {
+      res = await fetchLongVideoByCategory(categoryId, { page, pageSize, sort })
+    }
+
+    const newItems = (res?.list || []).map(item => ({
+      ...item,
+      cover: item.cover || item.cover_url,
+      vip: !!(item.vip ?? item.is_vip),
+      coin: item.coin ?? 0,
+      play: item.play ?? item.play_count ?? 0,
+    }))
+
+    if (isLoadMore) {
+      state.list = [...state.list, ...newItems]
+      state.page = page
+    } else {
+      state.list = newItems
+      state.page = 1
+    }
+
+    state.hasMore = newItems.length >= pageSize
+    state.inited = true
+
+    // 同步到 store，按 cacheKey+tabKey 缓存
+    const parent_id = categoryId
+    const tabKey = getTabKey(tabIndex)
+    const cacheKey = groupId ? Number(groupId) : parent_id
+    if (!longVideoStore.cache[cacheKey]) longVideoStore.cache[cacheKey] = {}
+    longVideoStore.cache[cacheKey][tabKey] = {
+      list: [...state.list],
+      total: state.list.length,
+      lastPage: state.page,
+      hasMore: state.hasMore
+    }
+  } finally {
+    state.loading = false
+  }
 }
+
+async function loadMore(tabIndex: number) {
+  await loadTabData(tabIndex, true)
+}
+
+onBeforeUnmount(() => {
+  removeScrollListener()
+})
 
 function onTabClick(i: number) {
+  saveCurrentTabScroll()
   activeTab.value = i
   swipeRef.value?.swipeTo(i)
+  nextTick(() => {
+    // 切换时重置滚动
+    const el = document.querySelector('.swipe-content')
+    if (el) el.scrollTop = 0
+    restoreTabScroll(i)
+  })
+  if (!tabStates.value[i].inited) {
+    loadTabData(i)
+  }
 }
-function onSwipeChange(i: number) { activeTab.value = i }
+function onSwipeChange(i: number) {
+  saveCurrentTabScroll()
+  activeTab.value = i
+  nextTick(() => {
+    // 切换时重置滚动
+    const el = document.querySelector('.swipe-content')
+    if (el) el.scrollTop = 0
+    restoreTabScroll(i)
+  })
+  if (!tabStates.value[i].inited) {
+    loadTabData(i)
+  }
+}
 
+// 修改 goToPlay 方法，保存正确的滚动位置
 const goToPlay = (item: any) => {
+  // 保存当前标签页的滚动位置
+  saveCurrentTabScroll()
+  // 获取当前标签页的滚动位置
+  const scrollTop = tabStates.value[activeTab.value].scrollTop
+
   sessionStorage.setItem('return-from', 'list')
-  sessionStorage.setItem('return-scroll', window.scrollY.toString())
-  sessionStorage.setItem('return-cat', String(currentCategory.value))
+  sessionStorage.setItem('return-scroll', scrollTop.toString())  // 保存内部滚动位置
+  sessionStorage.setItem('return-tab', activeTab.value.toString())
+  sessionStorage.setItem('return-page', tabStates.value[activeTab.value].page.toString())
+
   router.push({
     path: `/play/${item.id}`,
-    // 如需带参数可加 query
-    // query: { title: item.title, cover: item.cover }
   })
 }
+
 function goBack() {
   if (window.history.length <= 1) router.push('/')
   else router.back()
 }
 
-const sortedVideoList = computed(() => {
-  let list = [...videoList.value]
-  if (activeTab.value === 0) {
-    // 最多收藏
-    return list.sort((a, b) => (b.collect ?? 0) - (a.collect ?? 0))
-  } else if (activeTab.value === 1) {
-    // 最多观看
-    return list.sort((a, b) => (b.play ?? 0) - (a.play ?? 0))
-  } else if (activeTab.value === 2) {
-    // 最新上架（用id倒序）
-    return list.sort((a, b) => (b.id ?? 0) - (a.id ?? 0))
+function formatDuration(duration: number) {
+  if (!duration || isNaN(duration)) return '00:00'
+  const min = Math.floor(duration / 60)
+  const sec = duration % 60
+  return `${min}:${sec.toString().padStart(2, '0')}`
+}
+
+function formatPlayCount(count: number) {
+  if (count >= 10000) {
+    return (count / 10000).toFixed(2).replace(/\.00$/, '').replace(/(\.\d)0$/, '$1') + 'w'
+  } else if (count >= 1000) {
+    return (count / 1000).toFixed(2).replace(/\.00$/, '').replace(/(\.\d)0$/, '$1') + 'k'
   }
-  return list
+  return count?.toString() ?? '0'
+}
+
+function getSortByTab(tabIndex: number) {
+  if (tabIndex === 0) return 'collect'
+  if (tabIndex === 1) return 'play'
+  if (tabIndex === 2) return 'new'
+  return ''
+}
+function getTabKey(tabIndex: number) {
+  if (tabIndex === 0) return 'collect'
+  if (tabIndex === 1) return 'play'
+  if (tabIndex === 2) return 'new'
+  return ''
+}
+function saveCurrentTabScroll() {
+  const el = document.querySelector('.swipe-content') as HTMLElement
+  if (el) {
+    tabStates.value[activeTab.value].scrollTop = el.scrollTop
+  }
+}
+
+function restoreTabScroll(i: number) {
+  nextTick(() => {
+    const el = document.querySelector('.swipe-content') as HTMLElement
+    if (el) {
+      el.scrollTop = tabStates.value[i].scrollTop || 0
+    }
+  })
+}
+
+const sentinels = [ref(null), ref(null), ref(null)]
+const observers: IntersectionObserver[] = []
+
+function setSentinel(idx: number) {
+  return (el: HTMLElement | null) => {
+    sentinels[idx].value = el
+  }
+}
+
+tabs.forEach((tab, idx) => {
+  watch(sentinels[idx], (el) => {
+    if (!el) return
+    if (observers[idx]) observers[idx].disconnect()
+    observers[idx] = new IntersectionObserver((entries) => {
+      if (entries[0].isIntersecting) {
+        const state = tabStates.value[idx]
+        // 只有有数据渲染出来才允许继续加载
+        if (state.hasMore && !state.loading && state.list.length > 0) {
+          loadMore(idx)
+        }
+      }
+    }, { rootMargin: '120px' }) // 提前120px触发
+    observers[idx].observe(el)
+  }, { immediate: true })
+})
+
+onBeforeUnmount(() => {
+  observers.forEach(o => o && o.disconnect())
 })
 </script>
 
 <style scoped>
+/* 样式保持不变 */
 .list-page {
   background: #fff;
   min-height: 100vh;
@@ -167,7 +415,6 @@ const sortedVideoList = computed(() => {
   padding-bottom: 0;
 }
 
-/* 顶部标题栏样式 */
 .page-header {
   display: flex;
   align-items: center;
@@ -202,7 +449,6 @@ const sortedVideoList = computed(() => {
   z-index: 2;
 }
 
-/* 横滑tab */
 .tob-bar {
   display: flex;
   align-items: flex-end;
@@ -239,11 +485,12 @@ const sortedVideoList = computed(() => {
   border-radius: 1vw;
 }
 
-/* 内容区卡片列表 */
 .swipe-content {
   width: 100vw;
   background: #fff;
   min-height: 50vw;
+  height: 100vh;
+  overflow-y: auto;
 }
 .video-list {
   display: grid;
@@ -259,13 +506,12 @@ const sortedVideoList = computed(() => {
   display: flex;
   flex-direction: column;
   width: 44vw;
-  height: 40vw;     /* 固定高度 */
+  height: 40vw;
   min-height: 42vw;
   max-height: 54vw;
   position: relative;
 }
 
-/* 封面16:9 */
 .thumb-wrap {
   width: 100%;
   aspect-ratio: 16/9;
@@ -297,13 +543,12 @@ const sortedVideoList = computed(() => {
   border-radius: 0 0 2vw 2vw;
 }
 
-/* 标题和标签布局 */
 .desc-box {
   flex: 1;
   display: flex;
   flex-direction: column;
-  padding: 1.5vw 2vw 1vw 2vw;    /* 上下都留空间，标题上移 */
-  min-height: 12vw;              /* 自行调整紧凑度 */
+  padding: 1.5vw 2vw 1vw 2vw;
+  min-height: 12vw;
 }
 
 .video-title {
@@ -311,24 +556,22 @@ const sortedVideoList = computed(() => {
   color: #303030;
   font-weight: 550;
   line-height: 1.25;
-  margin-bottom: 0;        /* 不要额外下间距 */
+  margin-bottom: 0;
   overflow: hidden;
   display: -webkit-box;
   -webkit-line-clamp: 2;
   line-clamp: 2;
   -webkit-box-orient: vertical;
-  min-height: 8vw;        /* 两行高度 */
+  min-height: 8vw;
   max-height: 8vw;
-  /* 可以加点padding-top让标题更靠上，比如： */
-  /* padding-top: 0.3vw; */
 }
 
 .card-bottom {
   display: flex;
   align-items: center;
   gap: 2vw;
-  margin-top: 2vw;           /* 紧贴标题下方 */
-  padding-bottom: 0.3vw;   /* 让标签和评论不贴底 */
+  margin-top: 2vw;
+  padding-bottom: 0.3vw;
 }
 
 .tag {
@@ -341,5 +584,39 @@ const sortedVideoList = computed(() => {
   font-weight: 500;
   display: inline-block;
   line-height: 1;
+}
+
+.loading-tip {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 5.3vw 0;
+  font-size: 3.73vw;
+}
+.custom-spinner {
+  width: 9.3vw;
+  height: 9.3vw;
+  margin-bottom: 2.1vw;
+  animation: spin 0.8s linear infinite;
+}
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+.loading-text {
+  color: #ff5f5f;
+  font-weight: 500;
+}
+.no-more-text {
+  text-align: center;
+  color: #999;
+  font-weight: bold;
+  font-size: 3.73vw;
+  margin: 5.3vw 0;
+}
+.empty-data-message {
+  text-align: center;
+  padding: 8vw;
+  color: #999;
+  font-size: 4.26vw;
 }
 </style>
