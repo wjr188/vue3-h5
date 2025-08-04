@@ -265,6 +265,10 @@ function goToPlay(item: any) {
     console.error("goToPlay: 缺少 id!", item);
     return;
   }
+  // 只在首次进入详情页时设置
+  if (!sessionStorage.getItem('first-play-from')) {
+    sessionStorage.setItem('first-play-from', location.pathname + location.search)
+  }
   const idx = categoryNames.value.indexOf(currentCategory.value)
   const el = slideRefs.value[idx]
   const scrollTop = el?.scrollTop ?? 0

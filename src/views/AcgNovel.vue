@@ -68,7 +68,7 @@ const total = computed(() => {
   return currentCache.value[firstPage]?.total || 0
 })
 const currentPage = computed(() =>
-  sortedPages.value.length ? Math.max(...sortedPages.value) : 1
+  sortedPages.value.length ? Math.max(...sortedPages.value) : 0
 )
 const loading = computed(() => novelStore.novelLoading)
 const isActive = computed(() => props.activeSubCategory === props.categoryTitle)
@@ -78,7 +78,8 @@ watch([novels, total], () => {
 })
 
 async function tryLoadMore() {
-  if (!isActive.value || loading.value || noMore.value) return
+  if (!isActive.value || loading.value || noMore.value) return;
+  if (currentPage.value === 0) return; // 必须先有第一页
   const match = novelStore.mainCategories.find(c => c.name === props.categoryTitle)
   const categoryId = match?.id
   if (!categoryId) return

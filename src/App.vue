@@ -40,6 +40,7 @@ const getRouteCacheKey = (route) => {
 }
 const userStore = useUserStore()
 onMounted(async () => {
+  console.log('页面初次加载，token:', localStorage.getItem('token'))
   // 只有 token 和 uuid 都没有才自动注册游客
   const localUuid = localStorage.getItem('uuid')
   if (!userStore.token && !localUuid) {

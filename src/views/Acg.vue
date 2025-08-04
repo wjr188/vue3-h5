@@ -60,6 +60,7 @@
 </template>
 <script setup lang="ts">
 import { ref, computed, watch, nextTick, onMounted, ComponentPublicInstance, onActivated } from 'vue'
+import { onBeforeRouteLeave } from 'vue-router'
 import type { Swiper as SwiperInstance } from 'swiper'
 import { Swiper, SwiperSlide } from 'swiper/vue'
 import 'swiper/swiper-bundle.css'
@@ -79,6 +80,7 @@ import AcgAnimeRecommend from './AcgAnimeRecommend.vue'
 
 import { useComicCategoryStore } from '@/store/comicCategoryStore'
 import { useNovelCategoryStore } from '@/store/novelStore'
+import { useAudioNovelCategoryStore } from '@/store/audio-novel.store'
 import { animeSubCategories } from '@/constants/animeSubCategories.js'
 import { audioSubCategories } from '@/constants/audioSubCategories.js'
 import { comicSubCategories } from '@/constants/comicSubCategories.js'
@@ -100,9 +102,17 @@ const swiperRef = ref()
 const swiperInstance = ref<SwiperInstance | null>(null)
 const currentIndex = ref<number>(0)
 const bannerKey = ref(0)
+const restoring = ref(false)
+const tabIndexMap = ref<Record<TopCategory, number>>({
+  漫画: 0,
+  动漫: 0,
+  小说: 0,
+  有声: 0
+})
 
 const categoryStore = useComicCategoryStore()
 const novelCategoryStore = useNovelCategoryStore()
+const audioNovelCategoryStore = useAudioNovelCategoryStore()
 
 // ⭐ 监听tab切换到“小说”才拉小说分类，只拉一次
 watch(
@@ -118,7 +128,20 @@ watch(
   },
   { immediate: false }
 )
-
+// 监听tab切换到“有声”才拉有声分类，只拉一次
+watch(
+  activeTab,
+  async (val) => {
+    if (
+      val === '有声' &&
+      audioNovelCategoryStore.mainCategories.length === 0 &&
+      !audioNovelCategoryStore.loading
+    ) {
+      await audioNovelCategoryStore.loadCategoryList()
+    }
+  },
+  { immediate: false }
+)
 const subCategories = computed<string[]>(() => {
   if (activeTab.value === '漫画') {
     return ['推荐', ...categoryStore.mainCategories.map(c => c.name)]
@@ -130,7 +153,8 @@ const subCategories = computed<string[]>(() => {
     return ['推荐', ...novelCategoryStore.mainCategories.map(i => i.name)]
   }
   if (activeTab.value === '有声') {
-    return ['推荐', ...audioSubCategories.map(i => (typeof i === 'string' ? i : i.label))]
+    // 用真实数据
+    return ['推荐', ...audioNovelCategoryStore.mainCategories.map(i => i.name)]
   }
   return []
 })
@@ -174,32 +198,50 @@ function saveCurrentScroll() {
   }
 }
 
-watch(activeTab, () => {
-  currentIndex.value = 0
-  nextTick(() => {
-    swiperInstance.value?.slideTo(0, 0)
-    restoreScroll(0, subCategories.value[0])
-  })
-}, { immediate: true })
 
 function onSwiperReady(swiper: SwiperInstance) {
   swiperInstance.value = swiper
 }
-
 function handleTopCategoryChange(item: TopCategory) {
+  if (activeTab.value === item) return
+  
+  // 保存当前标签的状态
+  tabIndexMap.value[activeTab.value] = currentIndex.value
+  saveCurrentScroll()
+  
+  // 切换标签
   activeTab.value = item
+  
+  // 等待下一个tick确保子分类已加载
+  nextTick(() => {
+    // 恢复新标签的索引
+    const idx = tabIndexMap.value[item] ?? 0
+    currentIndex.value = idx
+    
+    // 确保swiper已初始化
+    if (swiperInstance.value) {
+      swiperInstance.value.slideTo(idx, 0)
+    }
+    
+    // 恢复滚动位置
+    restoreScroll(idx, subCategories.value[idx])
+  })
 }
+
 function handleSubCategoryChange(name: string) {
   const idx = subCategories.value.indexOf(name)
   if (idx >= 0) {
     currentIndex.value = idx
+    tabIndexMap.value[activeTab.value] = idx // 记忆
     swiperInstance.value?.slideTo(idx, 0)
     bannerKey.value++
     restoreScroll(idx, name)
   }
 }
+
 function onSlideChange(swiper: SwiperInstance) {
   currentIndex.value = swiper.activeIndex
+  tabIndexMap.value[activeTab.value] = swiper.activeIndex
   const name = subCategories.value[swiper.activeIndex]
   restoreScroll(swiper.activeIndex, name)
 
@@ -218,9 +260,18 @@ function onSlideChange(swiper: SwiperInstance) {
       novelCategoryStore.loadNovelsByCategory(name, mainCategory.id, 1, 15)
     }
   }
+  // 有声逻辑（只加这一段！）
+  if (activeTab.value === '有声' && name !== '推荐') {
+  const mainCategory = audioNovelCategoryStore.mainCategories.find(c => c.name === name)
+  if (mainCategory && !audioNovelCategoryStore.categoryAudioMap[mainCategory.id]) {
+    audioNovelCategoryStore.loadAudioNovelList({
+      categoryId: mainCategory.id,
+      page: 1,
+      pageSize: 15
+    }, false, mainCategory.id)
+  }
 }
-
-
+}
 const dataMap = computed<Record<string, any[]>>(() => {
   const map: Record<string, any[]> = {}
   if (activeTab.value === '漫画') {
@@ -268,7 +319,12 @@ function getComponentProps(name: string, idx?: number) {
   if (activeTab.value === '小说' && name !== '推荐') {
     novels = novelCategoryStore.categoryNovelMap[name] ?? []
   }
-  // ⭐ 小说 parentCategoryId（如有需要可参照漫画方式加逻辑）
+  // ⭐ 只给有声tab非推荐加 categoryId
+   let categoryId: number | string | undefined = undefined
+  if (activeTab.value === '有声' && name !== '推荐') {
+    const mainCategory = audioNovelCategoryStore.mainCategories.find(c => c.name === name)
+    categoryId = mainCategory?.id
+  }
   return {
     categoryTitle: name,
     activeTab: activeTab.value,
@@ -278,82 +334,100 @@ function getComponentProps(name: string, idx?: number) {
     novels: activeTab.value === '小说' ? novels : undefined,
     audios: activeTab.value === '有声' ? data : undefined,
     scrollContainerRef: { value: slideRefs.value[idx!] as HTMLElement | null },
-    parentCategoryId: parentCategoryId
+    parentCategoryId: parentCategoryId,
+    ...(activeTab.value === '有声' && name !== '推荐' ? { categoryId } : {})
   }
 }
 onActivated(() => {
-  const tab = sessionStorage.getItem('acg-return-tab')
+  const tab = sessionStorage.getItem('acg-return-tab') as TopCategory | null
   const sub = sessionStorage.getItem('acg-return-sub')
-
+  
+  // 清理函数
   const cleanup = () => {
     sessionStorage.removeItem('acg-return-tab')
     sessionStorage.removeItem('acg-return-sub')
     sessionStorage.removeItem('acg-more-scroll-top')
   }
 
-  const handleSubCategoryRestore = (sub: string | null) => {
-    if (!sub) {
-      cleanup()
-      return
-    }
-
-    const idx = subCategories.value.indexOf(sub)
-    if (idx === -1) {
-      cleanup()
-      return
-    }
-
-    if (currentIndex.value !== idx) {
-      currentIndex.value = idx
-      
-      nextTick(() => {
-        if (swiperInstance.value?.activeIndex !== idx) {
-          swiperInstance.value?.slideTo(idx, 300)
-        }
-        
-        const el = slideRefs.value[idx]
-        const savedPos = sessionStorage.getItem('acg-more-scroll-top')
-        
-        if (el && el instanceof HTMLElement && savedPos) {
-          let attempts = 0
-          const tryScroll = () => {
-            if (attempts > 30) return
-            
-            if (el.scrollHeight > 100) {
-              el.scrollTop = parseInt(savedPos)
-              if (Math.abs(el.scrollTop - parseInt(savedPos)) > 5) {
-                requestAnimationFrame(tryScroll)
-              }
-            } else {
-              requestAnimationFrame(tryScroll)
-            }
-            attempts++
-          }
-          requestAnimationFrame(tryScroll)
-        }
-        
-        cleanup()
-      })
-    } else {
-      cleanup()
-    }
+  // 如果没有保存的状态，直接返回
+  if (!tab && !sub) {
+    return
   }
 
+  // 如果保存的标签与当前不同，先切换标签
   if (tab && activeTab.value !== tab) {
-    activeTab.value = tab as TopCategory
-    nextTick(() => handleSubCategoryRestore(sub))
-  } else if (sub) {
-    handleSubCategoryRestore(sub)
+    activeTab.value = tab
+    // 等待标签切换完成
+    nextTick(() => {
+      // 如果有子分类需要恢复
+      if (sub) {
+        const idx = subCategories.value.indexOf(sub)
+        if (idx !== -1) {
+          currentIndex.value = idx
+          if (swiperInstance.value) {
+            swiperInstance.value.slideTo(idx, 0)
+          }
+          // 恢复滚动位置
+          restoreScroll(idx, sub)
+        }
+      }
+      cleanup()
+    })
+  } 
+  // 如果标签相同，只需要恢复子分类
+  else if (sub) {
+    const idx = subCategories.value.indexOf(sub)
+    if (idx !== -1) {
+      if (currentIndex.value !== idx) {
+        currentIndex.value = idx
+        if (swiperInstance.value) {
+          swiperInstance.value.slideTo(idx, 0)
+        }
+      }
+      // 恢复滚动位置
+      restoreScroll(idx, sub)
+    }
+    cleanup()
   } else {
     cleanup()
   }
 })
-onMounted(() => {
-  restoreScroll(currentIndex.value, subCategories.value[0])
+// 在离开页面时保存当前状态
+onBeforeRouteLeave(() => {
+  sessionStorage.setItem('acg-return-tab', activeTab.value)
+  sessionStorage.setItem('acg-return-sub', activeSubCategory.value)
+  saveCurrentScroll()
 })
 onMounted(() => {
+  const savedTab = sessionStorage.getItem('acg-return-tab') as TopCategory | null
+  const savedSub = sessionStorage.getItem('acg-return-sub')
+  
+  if (savedTab) {
+    activeTab.value = savedTab
+    // 等待下一个tick确保子分类已加载
+    nextTick(() => {
+      if (savedSub) {
+        const idx = subCategories.value.indexOf(savedSub)
+        if (idx !== -1) {
+          currentIndex.value = idx
+          // 确保swiper已初始化
+          if (swiperInstance.value) {
+            swiperInstance.value.slideTo(idx, 0)
+          }
+          // 恢复滚动位置
+          restoreScroll(idx, savedSub)
+        }
+      }
+    })
+  } else {
+    // 默认情况下恢复当前标签的状态
+    restoreScroll(currentIndex.value, subCategories.value[currentIndex.value])
+  }
+  
+  // 加载漫画分类
   categoryStore.loadCategories({ onlyMain: 1 })
 })
+
 
 
 </script>

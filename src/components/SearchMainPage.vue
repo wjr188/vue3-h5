@@ -149,9 +149,13 @@ import AcgSection from '@/components/AcgSection.vue'
 import { useComicCategoryStore } from '@/store/comicCategoryStore'
 import { useHotKeywordStore } from '@/store/h5HotKeyword.store'
 import { useNovelCategoryStore } from '@/store/novelStore'
-
+import { useAudioNovelCategoryStore } from '@/store/audio-novel.store'
 
 const hotKeywordStore = useHotKeywordStore()
+const comicStore = useComicCategoryStore()
+const novelStore = useNovelCategoryStore()
+const audioNovelStore = useAudioNovelCategoryStore()
+
 const tabTypeMap: Record<string, string> = {
   漫画: 'comic',
   动漫: 'anime',
@@ -184,7 +188,7 @@ watch(
   { immediate: true }
 )
 
-// ================= 搜一搜 =================
+// =============== 搜一搜 ===================
 const keyword = ref('')
 const searching = ref(false)
 const searchList = ref<any[]>([])
@@ -256,72 +260,73 @@ async function fetchSearchPage() {
   }
 
   try {
-    let res;
-if (activeTab.value === '小说') {
-  res = await novelStore.searchNovels({
-    keyword: keyword.value.trim(),
-    page: searchPage.value,
-    pageSize: 15,
-    categoryId: selectedCategory.value.key || '',
-  });
-} else {
-  // 加载漫画数据
-  res = await comicStore.loadAllComics(params);
-}
+    let res
+    if (activeTab.value === '小说') {
+      res = await novelStore.searchNovels({
+        keyword: keyword.value.trim(),
+        page: searchPage.value,
+        pageSize: 15,
+        categoryId: selectedCategory.value.key || '',
+      })
+    } else if (activeTab.value === '有声') {
+      res = await audioNovelStore.searchAudioNovels({
+        keyword: keyword.value.trim(),
+        page: searchPage.value,
+        pageSize: 15,
+        categoryId: selectedCategory.value.key || '',
+      })
+    } else {
+      // 漫画和动漫都走这里
+      res = await comicStore.loadAllComics(params)
+    }
 
-const listArr = res?.list || [];
-
+    const listArr = res?.list || []
     const newList = listArr.map(item => ({
       ...item,
       title: item.name || item.title,
       tag: item.tags || [],
-    }));
+      cover: item.cover || item.cover_url || '',
+    }))
 
     if (searchPage.value === 1) {
-      searchList.value = newList;
+      searchList.value = newList
     } else {
-      searchList.value = searchList.value.concat(newList);
+      searchList.value = searchList.value.concat(newList)
     }
 
-    searchTotal.value = res?.total || 0;
-
+    searchTotal.value = res?.total || 0
     if (searchList.value.length >= searchTotal.value || newList.length < 15) {
-      searchNoMore.value = true;
+      searchNoMore.value = true
     }
 
-    searchPage.value++;
-    await nextTick();
-    initSearchObserver();
+    searchPage.value++
+    await nextTick()
+    initSearchObserver()
   } catch (err) {
-    console.error(err);
+    console.error(err)
   }
 
-  searchLoading.value = false;
+  searchLoading.value = false
 }
+
 function initSearchObserver() {
-  if (!searching.value) return;
-  if (observerSearch) observerSearch.disconnect();
-  
+  if (!searching.value) return
+  if (observerSearch) observerSearch.disconnect()
   nextTick(() => {
-    if (!searchSentinel.value) return;
+    if (!searchSentinel.value) return
     observerSearch = new IntersectionObserver((entries) => {
-      console.log('IntersectionObserver triggered:', entries);
       if (entries[0].isIntersecting && !searchLoading.value && !searchNoMore.value) {
-        console.log('Fetching next search page...');
-        fetchSearchPage();
+        fetchSearchPage()
       }
     }, {
       root: document.querySelector('.scroll-content') || undefined,
       threshold: 0.1,
-    });
-
-    observerSearch.observe(searchSentinel.value);
-  });
+    })
+    observerSearch.observe(searchSentinel.value)
+  })
 }
 
-// ================== 漫画库 ==================
-const comicStore = useComicCategoryStore()
-const novelStore = useNovelCategoryStore()
+// =============== 分类/标签/排序 统一逻辑 ===================
 const categoryList = ref<{ key: number, label: string }[]>([])
 const tagList = ref<{ id: number, name: string }[]>([{ id: 0, name: '全部标签' }])
 const sortList = ref(['综合排序', '观看最多', '最新上架', '收藏最多'])
@@ -335,35 +340,47 @@ const selectedCategory = ref<{ key: number, label: string }>({ key: 0, label: '�
 const selectedTag = ref<number>(0)
 const selectedSort = ref<string>('综合排序')
 
-const lazyList = ref<any[]>([])
-const total = ref(0)
-const page = ref(1)
-const isApiLoading = ref(false)
-const isNoMore = ref(false)
-const lazySentinel = ref<HTMLElement | null>(null)
-let observer: IntersectionObserver | null = null
-// 从小说 store 中获取分类数据
-const loadNovelCategories = async () => {
-  if (categoryLoaded) return;  // 如果分类数据已经加载，跳过
-  await novelStore.fetchCategoryList();  // 获取小说分类
-  categoryList.value = [
-    { key: 0, label: '全部分类' },
-    ...novelStore.mainCategories.map(c => ({ key: c.id, label: c.name }))  // 格式化分类数据
-  ];
-  categoryLoaded = true;  // 标记分类已加载
-};
-
-// 获取小说标签数据
-const loadNovelTags = async () => {
-  if (tagsLoaded) return;  // 如果标签数据已经加载，跳过
-  await novelStore.fetchTagList();  // 获取小说标签
-  tagList.value = [{ id: 0, name: '全部标签' }, ...novelStore.tagList.map(tag => ({ id: tag.id, name: tag.name }))];  // 格式化标签数据
-  tagsLoaded = true;  // 标记标签已加载
-};
-
-// 分类和标签数据缓存，减少请求（每次切tab只拉一次，切回不重复请求）
 let categoryLoaded = false
 let tagsLoaded = false
+
+const loadCategories = async () => {
+  if (categoryLoaded) return
+  if (activeTab.value === '漫画') {
+    await comicStore.loadMainCategories()
+    categoryList.value = [
+      { key: 0, label: '全部分类' },
+      ...comicStore.mainCategories.map(c => ({ key: c.id, label: c.name }))
+    ]
+  } else if (activeTab.value === '小说') {
+    await novelStore.fetchCategoryList()
+    categoryList.value = [
+      { key: 0, label: '全部分类' },
+      ...novelStore.mainCategories.map(c => ({ key: c.id, label: c.name }))
+    ]
+  } else if (activeTab.value === '有声') {
+    await audioNovelStore.loadCategoryList()
+    categoryList.value = [
+      { key: 0, label: '全部分类' },
+      ...audioNovelStore.mainCategories.map(c => ({ key: c.id, label: c.name }))
+    ]
+  }
+  categoryLoaded = true
+}
+
+const loadTags = async () => {
+  if (tagsLoaded) return
+  if (activeTab.value === '漫画') {
+    await comicStore.loadComicTags({ status: 1, page: 1, page_size: 50 })
+    tagList.value = [{ id: 0, name: '全部标签' }, ...comicStore.comicTags.map(tag => ({ id: tag.id, name: tag.name }))]
+  } else if (activeTab.value === '小说') {
+    await novelStore.fetchTagList()
+    tagList.value = [{ id: 0, name: '全部标签' }, ...novelStore.tagList.map(tag => ({ id: tag.id, name: tag.name }))]
+  } else if (activeTab.value === '有声') {
+    await audioNovelStore.loadTagList()
+    tagList.value = [{ id: 0, name: '全部标签' }, ...audioNovelStore.tagList.map(tag => ({ id: tag.id, name: tag.name }))]
+  }
+  tagsLoaded = true
+}
 
 function resetAllData() {
   page.value = 1
@@ -371,38 +388,54 @@ function resetAllData() {
   isNoMore.value = false
   if (observer) observer.disconnect()
 }
+
+// ============== 懒加载与数据拉取 ================
+const lazyList = ref<any[]>([])
+const total = ref(0)
+const page = ref(1)
+const isApiLoading = ref(false)
+const isNoMore = ref(false)
+const lazySentinel = ref<HTMLElement | null>(null)
+let observer: IntersectionObserver | null = null
+
 async function fetchFirstPage(force = false) {
-  const cacheKey = `${selectedCategory.value.key}_${selectedTag.value}_${sortMap[selectedSort.value] || 'default'}_1`
-  const cache = comicStore.comicLibraryCache[cacheKey]
-  if (!force && cache && cache.list && cache.list.length > 0) {
-    // ⭐有缓存直接渲染，不resetAllData，不拉接口，不loading
-    lazyList.value = (cache.list || []).map(item => ({
-      ...item,
-      title: item.name || item.title,
-      tag: item.tags || [],
-    }))
-    total.value = cache.total || 0
-    isNoMore.value = cache.noMore
-    page.value = 2
-    await nextTick()
-    initObserver()
-    return
-  }
-  // 没缓存才清空、loading、请求
   resetAllData()
   isApiLoading.value = true
-  const res = await comicStore.loadLibraryComicsWithCache({
-    categoryId: selectedCategory.value.key,
-    tagId: selectedTag.value,
-    sort: sortMap[selectedSort.value] || 'default',
-    page: 1,
-    pageSize: 15,
-    force
-  })
+
+  let res
+  if (activeTab.value === '漫画') {
+    res = await comicStore.loadLibraryComicsWithCache({
+      categoryId: selectedCategory.value.key,
+      tagId: selectedTag.value,
+      sort: sortMap[selectedSort.value] || 'default',
+      page: 1,
+      pageSize: 15,
+      force
+    })
+  } else if (activeTab.value === '小说') {
+    res = await novelStore.loadLibraryNovelsWithCache({
+      categoryId: selectedCategory.value.key,
+      tagId: selectedTag.value,
+      sort: sortMap[selectedSort.value] || 'default',
+      page: 1,
+      pageSize: 15,
+      force
+    })
+  } else if (activeTab.value === '有声') {
+    res = await audioNovelStore.loadLibraryAudioNovelsWithCache({
+      categoryId: selectedCategory.value.key,
+      tagId: selectedTag.value,
+      sort: sortMap[selectedSort.value] || 'default',
+      page: 1,
+      pageSize: 15,
+      force
+    })
+  }
   const newList = (res?.list || []).map(item => ({
     ...item,
     title: item.name || item.title,
     tag: item.tags || [],
+    cover: item.cover || item.cover_url || '',
   }))
   lazyList.value = newList
   total.value = res?.total || 0
@@ -412,171 +445,66 @@ async function fetchFirstPage(force = false) {
   await nextTick()
   initObserver()
 }
-// 小说的首次数据加载
-// 获取小说列表的首次加载（与漫画逻辑一致）
-// 只保留小说数据加载接口调用
-async function fetchNovelFirstPage(force = false) {
-  const cacheKey = `${selectedCategory.value.key}_${selectedTag.value}_${sortMap[selectedSort.value] || 'default'}_1`;
-
-  console.log('请求缓存的key:', cacheKey);  // 日志：请求的缓存key
-
-  // 检查缓存数据
-  const cache = novelStore.novelLibraryCache[cacheKey];
-  console.log('缓存数据:', cache);  // 日志：查看缓存数据
-
-  if (!force && cache && cache.list && cache.list.length > 0) {
-    console.log('使用缓存数据');  // 日志：缓存有效，使用缓存数据
-
-    lazyList.value = (cache.list || []).map(item => ({
-      ...item,
-      title: item.name || item.title,
-      tag: item.tags || [],
-      cover: item.cover_url || item.cover || '',
-      views: item.views || 0,
-      likes: item.likes || 0,
-      is_serializing: item.serialization_status === 1,
-    }));
-
-    total.value = cache.total || 0;
-    isNoMore.value = cache.noMore;
-    page.value = 2;
-
-    console.log('加载的列表数据:', lazyList.value);  // 日志：加载的数据列表
-    console.log('总数:', total.value);  // 日志：总数
-    console.log('没有更多数据:', isNoMore.value);  // 日志：是否没有更多数据
-
-    await nextTick();
-    initObserver();  // 初始化懒加载观察者
-    return;
-  }
-
-  console.log('没有缓存或强制刷新，发起API请求');
-
-  // 如果没有缓存数据，调用接口请求
-  resetAllData();
-  isApiLoading.value = true;
-
-  try {
-    const res = await novelStore.loadLibraryNovelsWithCache({
-      categoryId: selectedCategory.value.key,
-      tagId: selectedTag.value,
-      sort: sortMap[selectedSort.value] || 'default',
-      page: 1,
-      pageSize: 15,
-      force
-    });
-
-    console.log('API响应数据:', res);  // 日志：API响应的数据
-
-    const newList = (res?.list || []).map(item => ({
-      ...item,
-      title: item.name || item.title,
-      tag: item.tags || [],
-      cover: item.cover_url || item.cover || '',
-      views: item.views || 0,
-      likes: item.likes || 0,
-      is_serializing: item.serialization_status === 1,
-    }));
-
-    lazyList.value = newList;
-    total.value = res?.total || 0;
-    isNoMore.value = res?.noMore;
-    isApiLoading.value = false;
-    page.value = 2;
-
-    console.log('加载的列表数据:', lazyList.value);  // 日志：加载的数据列表
-    console.log('总数:', total.value);  // 日志：总数
-    console.log('没有更多数据:', isNoMore.value);  // 日志：是否没有更多数据
-
-    await nextTick();
-    initObserver();  // 初始化懒加载观察者
-  } catch (error) {
-    console.error('加载小说失败:', error);  // 日志：请求错误
-    isApiLoading.value = false;
-  }
-}
 
 async function fetchNextPage() {
   if (isApiLoading.value || isNoMore.value) return
   isApiLoading.value = true
-
-  if (activeTab.value === '小说') {
-    const res = await novelStore.loadLibraryNovelsWithCache({
+  let res
+  if (activeTab.value === '漫画') {
+    res = await comicStore.loadLibraryComicsWithCache({
       categoryId: selectedCategory.value.key,
       tagId: selectedTag.value,
       sort: sortMap[selectedSort.value] || 'default',
       page: page.value,
       pageSize: 15
     })
-    const newList = (res?.list || []).map(item => ({
-      ...item,
-      title: item.name || item.title,
-      tag: item.tags || [],
-      cover: item.cover_url || item.cover || '',
-      views: item.views || 0,
-      likes: item.likes || 0,
-      is_serializing: item.serialization_status === 1,
-    }))
-    lazyList.value = lazyList.value.concat(newList)
-    total.value = res?.total || 0
-    isNoMore.value = res?.noMore
-  } else {
-    // 原有的漫画加载逻辑
-    const res = await comicStore.loadLibraryComicsWithCache({
+  } else if (activeTab.value === '小说') {
+    res = await novelStore.loadLibraryNovelsWithCache({
       categoryId: selectedCategory.value.key,
       tagId: selectedTag.value,
       sort: sortMap[selectedSort.value] || 'default',
       page: page.value,
       pageSize: 15
     })
-    const newList = (res?.list || []).map(item => ({
-      ...item,
-      title: item.name || item.title,
-      tag: item.tags || [],
-    }))
-    lazyList.value = lazyList.value.concat(newList)
-    total.value = res?.total || 0
-    isNoMore.value = res?.noMore
+  } else if (activeTab.value === '有声') {
+    res = await audioNovelStore.loadLibraryAudioNovelsWithCache({
+      categoryId: selectedCategory.value.key,
+      tagId: selectedTag.value,
+      sort: sortMap[selectedSort.value] || 'default',
+      page: page.value,
+      pageSize: 15
+    })
   }
-
+  const newList = (res?.list || []).map(item => ({
+    ...item,
+    title: item.name || item.title,
+    tag: item.tags || [],
+    cover: item.cover || item.cover_url || '', 
+  }))
+  lazyList.value = lazyList.value.concat(newList)
+  total.value = res?.total || 0
+  isNoMore.value = res?.noMore
   isApiLoading.value = false
   page.value++
 }
 
 function initObserver() {
-  if (observer) observer.disconnect();
+  if (observer) observer.disconnect()
   nextTick(() => {
-    if (!lazySentinel.value) return;
+    if (!lazySentinel.value) return
     observer = new IntersectionObserver((entries) => {
       if (entries[0].isIntersecting && !isApiLoading.value && !isNoMore.value) {
-        fetchNextPage();
+        fetchNextPage()
       }
     }, {
       root: document.querySelector('.scroll-content') || undefined,
       threshold: 0.1,
-    });
-    observer.observe(lazySentinel.value);
-  });
+    })
+    observer.observe(lazySentinel.value)
+  })
 }
 
-// 分类/标签接口都只在“漫画库”tab首次进入时加载一次
-const loadCategories = async () => {
-  if (categoryLoaded) return
-  await comicStore.loadMainCategories()
-  categoryList.value = [
-    { key: 0, label: '全部分类' },
-    ...comicStore.mainCategories.map(c => ({ key: c.id, label: c.name }))
-  ]
-  categoryLoaded = true
-}
-const loadTags = async () => {
-  if (tagsLoaded) return
-  await comicStore.loadComicTags({ status: 1, page: 1, page_size: 50 })
-  tagList.value = [{ id: 0, name: '全部标签' }, ...comicStore.comicTags.map(tag => ({ id: tag.id, name: tag.name }))]
-  tagsLoaded = true
-}
-
-// ======= 来源信息保存&还原 =======
+// =============== 来源信息保存&还原 ================
 function saveCurrentSearchState() {
   sessionStorage.setItem('search-main-return-path', window.location.pathname + window.location.search)
   sessionStorage.setItem('search-main-return-tab', activeTab.value)
@@ -614,6 +542,8 @@ function goToDetail(item) {
       params: { id: item.id },
       query: { title: item.title }
     })
+  } else if (activeTab.value === '有声') {
+    router.push({ name: 'AudioPlayer', params: { id: item.id }, query: { title: item.title } })
   }
   // 你如果还有动漫/有声，按需补充 else if
 }
@@ -639,7 +569,7 @@ function goBack() {
 async function restoreFromQuery(q: any) {
   let restoreCategoryId = q.category
   let restoreTagId = q.tag
-  let restorePage = Number(sessionStorage.getItem('search-main-page') || '1')  // 还原页
+  let restorePage = Number(sessionStorage.getItem('search-main-page') || '1')
   let restoreScroll = sessionStorage.getItem('search-main-scroll-top')
 
   if (q.activeTab) activeTab.value = q.activeTab as string
@@ -649,39 +579,21 @@ async function restoreFromQuery(q: any) {
   if (q.keyword !== undefined) keyword.value = q.keyword as string
   if (q.sort) selectedSort.value = q.sort as string
 
+  // 只用一套 categoryList/selectedCategory/tagList/selectedTag
   if (currentTab.value === 'library') {
-    if (activeTab.value === '漫画') {
-      await loadCategories()
-      if (restoreCategoryId) {
-        const catItem = categoryList.value.find(c => c.key == restoreCategoryId)
-        if (catItem) selectedCategory.value = catItem
-      }
-      await loadTags()
-      if (restoreTagId) {
-        selectedTag.value = Number(restoreTagId)
-      }
-      // 先拉第一页
-      await fetchFirstPage()
-      // 批量拉后续页，直到第N页
-      for (let i = 2; i <= restorePage; i++) {
-        page.value = i
-        await fetchNextPage()
-      }
-    } else if (activeTab.value === '小说') {
-      await loadNovelCategories()
-      if (restoreCategoryId) {
-        const catItem = categoryList.value.find(c => c.key == restoreCategoryId)
-        if (catItem) selectedCategory.value = catItem
-      }
-      await loadNovelTags()
-      if (restoreTagId) {
-        selectedTag.value = Number(restoreTagId)
-      }
-      await fetchNovelFirstPage()
-      for (let i = 2; i <= restorePage; i++) {
-        page.value = i
-        await fetchNextPage()
-      }
+    await loadCategories()
+    if (restoreCategoryId) {
+      const catItem = categoryList.value.find(c => c.key == restoreCategoryId)
+      if (catItem) selectedCategory.value = catItem
+    }
+    await loadTags()
+    if (restoreTagId) {
+      selectedTag.value = Number(restoreTagId)
+    }
+    await fetchFirstPage()
+    for (let i = 2; i <= restorePage; i++) {
+      page.value = i
+      await fetchNextPage()
     }
   } else {
     // ========================== 搜一搜tab专用还原 ==========================
@@ -731,42 +643,30 @@ onActivated(() => {
 })
 
 // 分类/标签/排序变化拉第一页
-watch([selectedCategory, selectedTag, selectedSort], async () => {
-  console.log('分类:', selectedCategory.value);
-  console.log('标签:', selectedTag.value);
-  console.log('排序:', selectedSort.value);
-  
+watch([selectedCategory, selectedTag, selectedSort, activeTab], async () => {
+  // 变化都自动切库，不分类型
   if (currentTab.value === 'library') {
-    if (activeTab.value === '漫画') {
-      await fetchFirstPage();  // 拉取漫画数据
-    } else if (activeTab.value === '小说') {
-      await fetchNovelFirstPage();  // 拉取小说数据
-    }
+    await fetchFirstPage()
   }
-});
-
+})
 
 // tab 切换时控制标签与数据请求
 async function switchTab(tab: 'search' | 'library') {
-  if (currentTab.value === tab) return;
-  currentTab.value = tab;
-  
-  resetAllData(); // 先重置状态
-  
+  if (currentTab.value === tab) return
+  currentTab.value = tab
+
+  resetAllData()
+
   if (tab === 'library') {
-    if (activeTab.value === '漫画') {
-      await loadCategories();
-      await loadTags();
-      await fetchFirstPage();
-    } else if (activeTab.value === '小说') {
-      await loadNovelCategories();
-      await loadNovelTags();
-      await fetchNovelFirstPage();
-    }
+    categoryLoaded = false
+    tagsLoaded = false
+    await loadCategories()
+    await loadTags()
+    await fetchFirstPage()
   }
-  
-  await nextTick();
-  initObserver(); // 确保在数据加载后初始化观察者
+
+  await nextTick()
+  initObserver()
 }
 </script>
 

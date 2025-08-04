@@ -329,25 +329,24 @@ clearSubCategories(parentId: number) {
 /**
    * 拉取某本漫画下，用户已解锁的所有章节ID
    */
-  async loadUnlockedChapters(comicId: number | string) {
+  async loadUnlockedChapters(comicId) {
   const cid = String(comicId)
   try {
-    const arr = await getUnlockedComicChapters({ comic_id: cid })
-    if (Array.isArray(arr)) {
-      this.unlockedChaptersMap[cid] = arr.map(String)
-      console.log('【写入unlockedChaptersMap】', cid, this.unlockedChaptersMap[cid])
+    const res = await getUnlockedComicChapters({ comic_id: cid })
+    // res.unlocked，res.can_view_vip_video...
+    if (res && Array.isArray(res.unlocked)) {
+      this.unlockedChaptersMap[cid] = res.unlocked.map(String)
       return this.unlockedChaptersMap[cid]
     } else {
       this.unlockedChaptersMap[cid] = []
-      console.log('【接口无解锁章节，清空】', cid)
       return []
     }
   } catch (e) {
     this.unlockedChaptersMap[cid] = []
-    console.log('【catch异常清空】', cid, e)
     return []
   }
 },
+
     /**
      * 拉取漫画标签列表
      * @param params 支持 keyword/status/page/page_size

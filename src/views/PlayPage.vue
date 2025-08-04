@@ -358,11 +358,11 @@ interface RecommendedItem {
   title: string
   tag: string
 }
-
 function goToPlay(item: RecommendedItem) {
-  console.log('跳转前 id:', item.id, 'encode(id):', encode(item.id));
-
-  router.push({
+  if (!sessionStorage.getItem('first-play-from')) {
+    sessionStorage.setItem('first-play-from', location.pathname + location.search)
+  }
+  router.replace({
     path: `/play/${encode(item.id)}`,
   });
 }

@@ -205,7 +205,15 @@ function getCache(key: string) {
   const cacheStr = localStorage.getItem('videoCache')
   if (!cacheStr) return undefined
   const cache = JSON.parse(cacheStr)
-  return cache[key]
+  const item = cache[key]
+  if (!item) return undefined
+  // 判断是否过期（比如1小时）
+  if (Date.now() - item.ts > 3600 * 1000) {
+    delete cache[key]
+    localStorage.setItem('videoCache', JSON.stringify(cache))
+    return undefined
+  }
+  return item.data
 }
 
 function setCache(key: string, data: any) {
@@ -213,7 +221,7 @@ function setCache(key: string, data: any) {
   let cache = {}
   const cacheStr = localStorage.getItem('videoCache')
   if (cacheStr) cache = JSON.parse(cacheStr)
-  cache[key] = data
+  cache[key] = { data, ts: Date.now() }
   // 控制缓存数量
   const keys = Object.keys(cache)
   if (keys.length > MAX_CACHE) {

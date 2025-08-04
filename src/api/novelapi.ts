@@ -1,43 +1,81 @@
 import request from '@/utils/request'
 
-// 获取小说分类
-export function getNovelCategoryList(params) {
+interface NovelCategoryListResponse {
+  mainCategories: any[]
+  subCategories: any[]
+}
+
+interface NovelListResponse {
+  list: any[]
+  total: number
+}
+
+interface NovelDetailResponse {
+  id: number
+  name: string
+  // 你可以补充更多字段
+}
+
+interface NovelChapterListResponse {
+  list: any[]
+  total: number
+}
+
+interface NovelChapterDetailResponse {
+  id: number
+  novel_id: number
+  title: string
+  content: string
+  // 你可以补充更多字段
+}
+
+interface RecommendGroupResponse {
+  groups: Array<{
+    id: number
+    name: string
+    novels: any[]
+  }>
+  total: number
+}
+
+interface RecommendGroupNovelsResponse {
+  list: any[]
+  total: number
+}
+
+interface NovelTagListResponse {
+  list: any[]
+}
+
+export function getNovelCategoryList(params?: any): Promise<NovelCategoryListResponse> {
   return request.get('api/text_novel_category/list', { params })
 }
 
-// 获取小说列表
-export function getNovelList(params) {
+export function getNovelList(params?: any): Promise<NovelListResponse> {
   return request.get('api/text_novel/list', { params })
 }
 
-// 获取小说详情
-export function getNovelDetail(id) {
-  // 兼容你的控制器 read($id)
+export function getNovelDetail(id: number | string): Promise<NovelDetailResponse> {
   return request.get('api/text_novel/read', { params: { id } })
 }
 
-// 获取小说章节列表（分页，带 novelId）
-export function getNovelChapters(params) {
-  // params: { novelId, page, pageSize }
+export function getNovelChapters(params?: any): Promise<NovelChapterListResponse> {
   return request.get('api/text_novel_chapter/list', { params })
 }
-// 获取单章节内容（正文等）
-export function getNovelChapterDetail(id) {
+
+export function getNovelChapterDetail(id: number | string): Promise<NovelChapterDetailResponse> {
   return request.get(`api/text_novel_chapter/${id}`)
 }
-// 首页推荐分组+小说（支持分页！）
-export function getNovelRecommendAllWithNovels(params = {}) {
-  // params = { page, pageSize }
+
+export function getNovelRecommendAllWithNovels(params?: any): Promise<RecommendGroupResponse> {
   return request.get('api/novel-recommend/group/allWithNovels', { params })
 }
 
-// 获取推荐分组下的所有小说（分页，推荐页“更多”用）
-export function getNovelRecommendGroupNovels(params) {
-  // params = { groupId, page, pageSize }
+export function getNovelRecommendGroupNovels(params: { groupId: number | string; page?: number; pageSize?: number }): Promise<RecommendGroupNovelsResponse> {
   const { groupId, ...rest } = params
   return request.get(`api/novel-recommend/group/${groupId}/novels`, { params: rest })
 }
-// 获取小说标签列表
-export function getNovelTagList(params) {
+
+export function getNovelTagList(params?: any): Promise<NovelTagListResponse> {
   return request.get('api/text_novel_tag/list', { params })
 }

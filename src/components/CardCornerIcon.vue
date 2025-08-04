@@ -51,7 +51,6 @@ function onCoinClick() {
   position: absolute;
   top: 0;
   right: 0;
-  z-index: 99;
   display: flex;
   align-items: center;
   gap: 4px;

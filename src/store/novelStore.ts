@@ -154,7 +154,8 @@ async loadLibraryNovelsWithCache(opt: {
     default: {},
     views: { orderBy: 'views', orderDir: 'desc' },
     create_time: { orderBy: 'create_time', orderDir: 'desc' },
-    collects: { orderBy: 'collects', orderDir: 'desc' }
+    collects: { orderBy: 'collects', orderDir: 'desc' },
+    newest: { orderBy: 'create_time', orderDir: 'desc' }
   };
   const sortObj = sortMap[sort] || {};
 
@@ -242,26 +243,27 @@ async loadLibraryNovelsWithCache(opt: {
 
     // -------- 查询已解锁的小说章节ID（用于目录页/阅读器），只拉一次 --------
     async loadUnlockedNovelChapters(novelId, force = false) {
-      const nid = String(novelId)
-      // 只要是数组（哪怕空的 []），都不请求接口
-      if (!force && Array.isArray(this.unlockedNovelChaptersMap[nid])) {
-        return this.unlockedNovelChaptersMap[nid]
-      }
-      try {
-        const res = await getUnlockedNovelChapters({ novel_id: nid })
-        this.unlockedNovelChaptersMap = {
-          ...this.unlockedNovelChaptersMap,
-          [nid]: Array.isArray(res) ? res.map(String) : []
-        }
-        return this.unlockedNovelChaptersMap[nid]
-      } catch (e) {
-        this.unlockedNovelChaptersMap = {
-          ...this.unlockedNovelChaptersMap,
-          [nid]: []
-        }
-        return []
-      }
-    },
+  const nid = String(novelId)
+  // 只要是数组（哪怕空的 []），都不请求接口
+  if (!force && Array.isArray(this.unlockedNovelChaptersMap[nid])) {
+    return this.unlockedNovelChaptersMap[nid]
+  }
+  try {
+    const res = await getUnlockedNovelChapters({ novel_id: nid })
+    const unlockedArr = Array.isArray(res.unlocked) ? res.unlocked : []
+    this.unlockedNovelChaptersMap = {
+      ...this.unlockedNovelChaptersMap,
+      [nid]: unlockedArr.map(String)
+    }
+    return this.unlockedNovelChaptersMap[nid]
+  } catch (e) {
+    this.unlockedNovelChaptersMap = {
+      ...this.unlockedNovelChaptersMap,
+      [nid]: []
+    }
+    return []
+  }
+},
 
     // -------- 解锁小说章节 --------
     async buyNovelChapter(chapterId) {

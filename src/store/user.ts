@@ -55,22 +55,22 @@ export const useUserStore = defineStore('user', {
 
   actions: {
     async autoRegisterIfNeed() {
-      if (!this.token) {
-        const guestUuid = localStorage.getItem('guestUuid')
-        const res = guestUuid
-          ? await autoRegisterApi({ uuid: guestUuid })
-          : await autoRegisterApi()
-
-        const token = res.token
-        const uuid = res.uuid
-        if (!token) throw new Error('autoRegisterApi 未返回token')
-        this.token = token
-        localStorage.setItem('token', token)
-        if (uuid) {
-          localStorage.setItem('guestUuid', uuid)
-        }
-      }
-    },
+  if (!this.token) {
+    const guestUuid = localStorage.getItem('guestUuid')
+    const res = guestUuid
+      ? await autoRegisterApi({ uuid: guestUuid })
+      : await autoRegisterApi()
+    console.log('autoRegister 返回:', res)
+    const token = res.token
+    const uuid = res.uuid
+    this.token = token
+    localStorage.setItem('token', token)
+    if (uuid) {
+      localStorage.setItem('guestUuid', uuid)
+    }
+    console.log('注册游客后 token:', this.token, 'localStorage token:', localStorage.getItem('token'))
+  }
+},
 
     /**
      * 拉取用户信息，有缓存（默认只请求一次，强制刷新传 true）

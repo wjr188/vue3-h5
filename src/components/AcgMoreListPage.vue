@@ -25,20 +25,19 @@
     </div>
   </div>
 </template>
-
 <script setup lang="ts">
-import { ref, onMounted, nextTick, onUnmounted, onActivated } from 'vue'
+import { ref, onMounted, nextTick, onUnmounted, onActivated, computed } from 'vue'
 import { useRouter } from 'vue-router'
 import AcgCard from '@/components/AcgCard.vue'
 import { useComicCategoryStore } from '@/store/comicCategoryStore'
 import { useNovelCategoryStore } from '@/store/novelStore'
+import { useAudioNovelCategoryStore } from '@/store/audio-novel.store'
 
-// Store 和 Router 初始化
 const comicStore = useComicCategoryStore()
 const novelStore = useNovelCategoryStore()
+const audioStore = useAudioNovelCategoryStore()
 const router = useRouter()
 
-// 数据声明
 const pageTitle = ref(sessionStorage.getItem('acg-return-sub') || '推荐')
 const groupId = ref<number | null>(
   sessionStorage.getItem('groupId') ? Number(sessionStorage.getItem('groupId')) : null
@@ -46,7 +45,11 @@ const groupId = ref<number | null>(
 const subCategoryId = ref<number | null>(
   sessionStorage.getItem('subCategoryId') ? Number(sessionStorage.getItem('subCategoryId')) : null
 )
-const isNovel = ref(sessionStorage.getItem('type') === 'novel')
+// 支持三种类型：type = comic | novel | audio
+const type = sessionStorage.getItem('type') // 推荐你 setItem('type', 'audio') / 'novel' / 'comic'
+const isComic = computed(() => !type || type === 'comic')
+const isNovel = computed(() => type === 'novel')
+const isAudio = computed(() => type === 'audio')
 
 const items = ref<any[]>([])
 const isLoading = ref(false)
@@ -56,22 +59,58 @@ const total = ref(0)
 const sentinel = ref<HTMLDivElement | null>(null)
 const scrollContent = ref<HTMLElement | null>(null)
 
-// 数据加载
 async function loadMore() {
   if (isLoading.value || noMore.value) return
   isLoading.value = true
 
-  let res
+  let res: { list: any[]; total: number } = { list: [], total: 0 }
+
+  // 推荐分组分页
   if (groupId.value && !subCategoryId.value) {
-    res = isNovel.value
-      ? await novelStore.loadRecommendGroupNovels(groupId.value, { page: page.value, pageSize: 15 })
-      : await comicStore.loadRecommendGroupComics(groupId.value, { page: page.value, pageSize: 15 })
-  } else if (subCategoryId.value) {
-    res = await comicStore.loadSubCategoryComics(subCategoryId.value, { page: page.value, pageSize: 15 })
-  } else {
-    res = { list: [], total: 0 }
+    if (isAudio.value) {
+      // 有声推荐分组
+      res = await audioStore.loadAudioRecommendGroupAudiosPaginated(
+        groupId.value, { page: page.value, pageSize: 15 }
+      )
+    } else if (isNovel.value) {
+      // 小说推荐分组
+      res = await novelStore.loadRecommendGroupNovels(
+        groupId.value, { page: page.value, pageSize: 15 }
+      )
+    } else {
+      // 漫画推荐分组
+      res = await comicStore.loadRecommendGroupComics(
+        groupId.value, { page: page.value, pageSize: 15 }
+      )
+    }
+  }
+  // 分类分页
+  else if (subCategoryId.value) {
+    if (isAudio.value) {
+      // 有声分页，兼容 store 分页缓存
+      const cacheKey = String(subCategoryId.value)
+      await audioStore.loadAudioNovelList(
+        { categoryId: subCategoryId.value, page: page.value, pageSize: 15 }, false, subCategoryId.value
+      )
+      const pageCache = audioStore.categoryAudioMap[cacheKey]?.[page.value]
+      res = {
+        list: pageCache?.list || [],
+        total: pageCache?.total || 0
+      }
+    } else if (isNovel.value) {
+      // 小说分页
+      res = await novelStore.loadCategoryNovels(
+        subCategoryId.value, { page: page.value, pageSize: 15 }
+      )
+    } else {
+      // 漫画分页
+      res = await comicStore.loadSubCategoryComics(
+        subCategoryId.value, { page: page.value, pageSize: 15 }
+      )
+    }
   }
 
+  // 默认空
   const list = res?.list || []
   total.value = res?.total || 0
   items.value = page.value === 1 ? list : [...items.value, ...list]
@@ -80,18 +119,15 @@ async function loadMore() {
   isLoading.value = false
 }
 
-// 保存滚动位置
 function saveScrollPosition() {
   const scrollPosition = scrollContent.value?.scrollTop || window.scrollY
   sessionStorage.setItem('acg-more-scroll-top', scrollPosition.toString())
 }
 
-// 恢复滚动位置
 async function restoreScrollPosition() {
   await nextTick()
   const savedScroll = sessionStorage.getItem('acg-more-scroll-top')
   if (!savedScroll) return
-
   requestAnimationFrame(() => {
     const position = parseInt(savedScroll, 10)
     if (scrollContent.value) {
@@ -103,30 +139,30 @@ async function restoreScrollPosition() {
   })
 }
 
-// 跳转详情页
 function goToDetail(item: any) {
-  const id = item.id || item.comic_id || item.novel_id
+  // id 兼容漫画/小说/有声
+  const id = item.id || item.comic_id || item.novel_id || item.audio_novel_id
   if (!id) {
     alert('数据异常，无法跳转详情')
     return
   }
-
   saveScrollPosition()
   sessionStorage.setItem('acg-return-from', JSON.stringify({ name: 'AcgMoreListPage' }))
-  
-  router.push({ 
-    name: isNovel.value ? 'NovelDetail' : 'ComicDetail',
-    params: { id } 
+  router.push({
+    name: isAudio.value
+      ? 'AudioPlayer'
+      : isNovel.value
+        ? 'NovelDetail'
+        : 'ComicDetail',
+    params: { id }
   })
 }
 
-// 返回
 function goBack() {
   const entryPath = sessionStorage.getItem('more-entry-path')
   const moreScroll = sessionStorage.getItem('acg-more-scroll-top')
   sessionStorage.removeItem('more-entry-path')
   sessionStorage.removeItem('acg-more-scroll-top')
-  
   if (entryPath) {
     router.replace(entryPath).then(() => {
       setTimeout(() => {
@@ -138,7 +174,6 @@ function goBack() {
   }
 }
 
-// 初始化 IntersectionObserver
 let observer: IntersectionObserver | null = null
 function initObserver() {
   observer = new IntersectionObserver(
@@ -152,7 +187,6 @@ function initObserver() {
   if (sentinel.value) observer.observe(sentinel.value)
 }
 
-// 生命周期
 onMounted(async () => {
   pageTitle.value = sessionStorage.getItem('moduleTitle') || '默认标题'
   await loadMore()

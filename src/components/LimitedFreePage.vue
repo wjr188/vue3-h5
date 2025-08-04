@@ -16,6 +16,7 @@
           class="video-card"
           v-for="item in videoList"
           :key="item.id"
+          @click="goToPlay(item)"
         >
           <div class="thumb-wrap">
             <img v-lazy="item.cover" class="cover" alt="" />
@@ -146,6 +147,10 @@ onMounted(async () => {
 onBeforeUnmount(() => {
   if (observer) observer.disconnect()
 })
+
+function goToPlay(item: VideoItem) {
+  router.push(`/play/${item.id}`)
+}
 </script>
 
 <style scoped>
@@ -207,7 +212,7 @@ onBeforeUnmount(() => {
   font-size: 3vw;
   color: #fff;
   padding: 0 2vw 1vw 2vw;
-  background: linear-gradient(0deg,rgba(34,34,34,0.80),rgba(34,34,34,0.10) 85%);
+  background: linear-gradient(0deg,rgba(34, 34, 34, 0.80),rgba(34, 34, 34, 0.10) 85%);
   border-radius: 0 0 2vw 2vw;
 }
 .desc-box {
