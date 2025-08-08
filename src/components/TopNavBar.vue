@@ -92,13 +92,22 @@ function onDrawerSelect(name: string) {
 }
 
 function goToSearch() {
-  router.push('/search-popup')
+  // 判断当前是否暗网模式
+  if (props.darkMode) {
+    router.push({ path: '/search-popup', query: { type: 'darknet' } })
+  } else {
+    router.push({ path: '/search-popup', query: { type: 'long' } })
+  }
 }
 function goToVip() {
   router.push('/vip')
 }
 function goToAllCategories() {
-  router.push('/all-categories')
+  if (props.darkMode) {
+    router.push({ path: '/all-categories', query: { type: 'darknet' } })
+  } else {
+    router.push({ path: '/all-categories', query: { type: 'long' } })
+  }
 }
 
 function scrollActiveIntoView(index: number) {

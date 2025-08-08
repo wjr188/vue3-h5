@@ -13,7 +13,7 @@
           @click="switchTab('recommend')"
         >推荐</span>
       </div>
-      <img src="/icons/search.svg" class="top-icon search" />
+      <img src="/icons/search.svg" class="top-icon search" @click="goToSearch" />
     </div>
 
     <!-- 页面内容 -->
@@ -36,6 +36,11 @@ import { useRoute, useRouter } from 'vue-router'
 import TiktokDiscover from './TiktokDiscover.vue'
 import TiktokRecommend from './TiktokRecommend.vue'
 import TabBar from '../components/TabBar.vue'
+
+// 定义组件名，确保 keep-alive 能正确识别
+defineOptions({
+  name: 'Tiktok'
+})
 
 const route = useRoute()
 const router = useRouter()
@@ -86,6 +91,10 @@ function goBack() {
   } else {
     router.back()
   }
+}
+
+function goToSearch() {
+  router.push('/search')
 }
 
 const activeTabComponent = computed(() =>

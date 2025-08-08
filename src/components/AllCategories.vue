@@ -134,7 +134,7 @@ import CardCornerIcon from './CardCornerIcon.vue'
 import { ref, computed, onMounted, onUnmounted, nextTick, onActivated } from 'vue'
 import { fetchH5AllLongVideos } from '@/api/longVideo.api'
 import { useLongTagStore } from '@/store/longTagStore'
-import { useRouter } from 'vue-router'
+import { useRouter, useRoute } from 'vue-router'
 
 interface VideoItem {
   id: number
@@ -167,14 +167,17 @@ const activePrice = ref('全部类型')
 const showAllTags = ref(false)
 const hasLoaded = ref(false)
 const scrollTop = ref(0)
-
 function goToPlay(video: VideoItem) {
   // 记录实际滚动容器的 scrollTop
   const wrapper = document.querySelector('.scroll-wrapper')
   if (wrapper) {
     scrollTop.value = wrapper.scrollTop
   }
-  router.push(`/play/${video.id}`)
+  // 跳转时带上 type 参数，确保暗网/长视频都能正确跳转
+  router.push({
+    path: `/play/${video.id}`,
+    query: { type: type.value }
+  })
 }
 
 onActivated(() => {
@@ -190,7 +193,8 @@ onActivated(() => {
 // 初始化
 onMounted(async () => {
   const longTagStore = useLongTagStore()
-  await longTagStore.loadTags()
+  // 这里加 type 参数，支持暗网标签
+  await longTagStore.loadTags(type.value)
   const sortedTags = (longTagStore.tags || []).slice().sort((a, b) => a.sort - b.sort)
   tags.value = sortedTags.map(t => t.name)
   // 只在首次进入时拉数据
@@ -201,33 +205,19 @@ onMounted(async () => {
   initObserver()
 })
 
-function getCache(key: string) {
-  const cacheStr = localStorage.getItem('videoCache')
-  if (!cacheStr) return undefined
-  const cache = JSON.parse(cacheStr)
-  const item = cache[key]
-  if (!item) return undefined
-  // 判断是否过期（比如1小时）
-  if (Date.now() - item.ts > 3600 * 1000) {
-    delete cache[key]
-    localStorage.setItem('videoCache', JSON.stringify(cache))
-    return undefined
-  }
-  return item.data
-}
+// 新增 type 支持（可通过 props 或路由参数传递）
+const route = useRoute();
+const type = ref(route.query.type || 'long'); // 优先用路由参数
 
+// 内存缓存对象
+const memoryCache: Record<string, any> = {};
+
+// 替换 getCache/setCache
+function getCache(key: string) {
+  return memoryCache[key];
+}
 function setCache(key: string, data: any) {
-  const MAX_CACHE = 50
-  let cache = {}
-  const cacheStr = localStorage.getItem('videoCache')
-  if (cacheStr) cache = JSON.parse(cacheStr)
-  cache[key] = { data, ts: Date.now() }
-  // 控制缓存数量
-  const keys = Object.keys(cache)
-  if (keys.length > MAX_CACHE) {
-    delete cache[keys[0]]
-  }
-  localStorage.setItem('videoCache', JSON.stringify(cache))
+  memoryCache[key] = { data, ts: Date.now() };
 }
 
 // 核心数据加载
@@ -239,38 +229,38 @@ async function loadVideos(reset = false) {
     page.value = 1;
     visibleList.value = [];
     noMore.value = false;
-    hasLoaded.value = false; // 重置加载状态
+    hasLoaded.value = false;
   }
 
   isLoading.value = true;
   try {
-    // 关键：每种筛选条件都生成唯一 key
     const params = {
       page: page.value,
       pageSize,
       sort: activeOrder.value,
       priceType: activePrice.value,
-      tag: activeTag.value
-    }
-    const cacheKey = JSON.stringify(params)
-    let res = getCache(cacheKey)
+      tag: activeTag.value,
+      type: type.value // ★★★ 关键：带上 type 参数
+    };
+    const cacheKey = JSON.stringify(params);
+    let res = getCache(cacheKey)?.data;
     if (!res) {
       res = await fetchH5AllLongVideos({
-        page: page.value,
-        pageSize,
-        sort: activeOrder.value === '最多观看' ? 'play' : 
+        ...params,
+        sort: activeOrder.value === '最多观看' ? 'play' :
               activeOrder.value === '最多收藏' ? 'collect' : 'new',
         priceType: activePrice.value === 'VIP' ? 'VIP' :
                   activePrice.value === '金币' ? '金币' :
                   activePrice.value === '免费' ? '免费' : undefined,
-        tag: activeTag.value !== '全部标签' ? activeTag.value : undefined
+        tag: activeTag.value !== '全部标签' ? activeTag.value : undefined,
       });
-      setCache(cacheKey, res)
+      setCache(cacheKey, res);
     }
 
+    // 兼容暗网和长视频字段
     const newVideos = (res.list || []).map(item => ({
       id: item.id,
-      cover: item.cover_url,
+      cover: item.cover_url || item.cover,
       title: item.title,
       views: item.play,
       duration: item.duration,
@@ -288,7 +278,7 @@ async function loadVideos(reset = false) {
   } finally {
     isLoading.value = false;
     loadingLock = false;
-    hasLoaded.value = true; // 接口回来的时候才设置 true
+    hasLoaded.value = true;
   }
 }
 

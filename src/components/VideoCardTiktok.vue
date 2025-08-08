@@ -2,6 +2,8 @@
   <div class="video-card" @click="goToPlay">
     <div class="cover-wrapper">
       <img v-lazy="cover" class="cover" />
+      <!-- 新增：VIP/金币角标 -->
+      <CardCornerIcon :isVip="vip" :coinAmount="coin" />
       <div class="info-bar">
         <div class="views">
           <img src="/icons/play4.svg" class="play-icon" alt="播放" />
@@ -18,6 +20,7 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import { useRouter } from 'vue-router'
+import CardCornerIcon from './CardCornerIcon.vue' // 新增
 
 const router = useRouter()
 
@@ -34,6 +37,7 @@ interface Props {
 }
 
 const props = defineProps<{
+  id?: number | string
   index: number
   category: string
   title: string
@@ -42,17 +46,31 @@ const props = defineProps<{
   duration: string
   tag?: string
   tags?: string[]
-  tagColor?: string  // 👈 注意这里 ? 表示可选
+  tagColor?: string
+  vip?: boolean
+  coin?: number
 }>()
 
 
 const displayTag = computed(() => props.tags?.[0] || props.tag || '')
 
 const goToPlay = () => {
+  // 触发发现页保存完整状态（包括最新滚动位置）
+  window.dispatchEvent(new CustomEvent('saveDiscoverState'))
+  
+  // 保存基本跳转信息到sessionStorage  
+  const discoverState = {
+    currentTag: props.category,
+    currentIndex: props.index,
+    from: 'discover'
+  }
+  sessionStorage.setItem('fromDiscoverPage', JSON.stringify(discoverState))
+  
   router.push({
     path: '/play-tiktok',
     query: {
-      category: props.category,
+      id: props.id,         // 视频id
+      tag: props.tag || (props.tags?.[0] ?? ''), // ✅ 这里用标签
       index: props.index,
       from: 'discover'
     }
@@ -72,7 +90,7 @@ const goToPlay = () => {
   width: 100%;
   aspect-ratio: 9 / 16;
   max-height: 66.66vw; /* 250px -> ~66.66vw */
-  overflow: hidden;
+  overflow: visible; /* 改为 visible 让角标能够显示 */
   border-radius: 2.13vw; /* 8px -> ~2.13vw */
 }
 
@@ -80,6 +98,7 @@ const goToPlay = () => {
   width: 100%;
   height: 100%;
   object-fit: cover;
+  border-radius: 2.13vw; /* 保持图片圆角 */
 }
 
 /* 播放图标 + 播放量 + 时长 */

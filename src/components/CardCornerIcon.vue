@@ -49,8 +49,9 @@ function onCoinClick() {
 <style scoped>
 .vip-corner {
   position: absolute;
-  top: 0;
-  right: 0;
+  top: 2px;
+  right: 2px;
+  z-index: 10;
   display: flex;
   align-items: center;
   gap: 4px;

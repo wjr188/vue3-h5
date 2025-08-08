@@ -1,160 +1,223 @@
 <template>
-  <div class="recommend-page" ref="scrollContainer" @scroll.passive="recordScroll">
-    <!-- 分类模块 -->
+  <div class="recommend-page" ref="recommendPageRef">
     <CategoryBlock
-      v-for="(item, index) in visibleList"
-      :key="index"
-      :category="item"
+      v-for="(group, index) in adaptedGroups"
+      :key="group.id"
+      :category="group"
       :dark="true"
       @clickItem="emitClickItem"
-      @goToMore="emitGoToMore"
+      @goToMore="() => emitGoToMore(group.name, group.id)"
+      @refreshGroup="refreshGroup"
     />
 
-    <!-- 加载动画 -->
-    <div v-if="isLoading" class="loading-tip">
+    <div v-if="loading" class="loading-tip">
       <img src="/icons/loading.svg" alt="加载中..." class="custom-spinner" />
       <div class="loading-text">客官别走，妾身马上就好~</div>
     </div>
-
-    <!-- 没有更多提示 -->
     <div v-if="noMore" class="no-more-text">
       客官，妾身被你弄高潮了，扛不住了 ~
     </div>
-
-    <!-- 懒加载触发点 -->
-    <div ref="sentinel" class="load-more-trigger"></div>
+    
   </div>
 </template>
 
 <script setup lang="ts">
-import { ref, nextTick, onActivated, Ref } from 'vue'
-import { useRoute } from 'vue-router'
+import { computed, onMounted, onUnmounted, nextTick, ref, watch } from 'vue'
 import CategoryBlock from './CategoryBlock.vue'
-import { useLazyLoad } from '@/composables/useLazyLoad'
+import { useDarknetStore } from '@/store/darknet.store'
+import { storeToRefs } from 'pinia'
+import { fetchDarknetGroupVideos } from '@/api/darknet.api' // 如未导入请补充
 
-// 类型定义
-interface SubImage {
+interface VideoItem {
+  id: number
   cover: string
-  src: string
   title: string
-  tag: string
+  play_count?: number
+  collect_count?: number
+  coin?: number
+  is_vip?: number
+  create_time?: string
+  duration?: string
+  tags?: any[]
+  preview?: string
+  [key: string]: any
 }
-interface CategoryItem {
+interface GroupItem {
+  id: number
   name: string
-  mainImage: string
-  mainTitle: string
-  mainTag: string
-  src: string
-  subImages: SubImage[]
+  sort: number
+  icon?: string
+  videos: VideoItem[]
 }
-
-// 路由
-const route = useRoute()
 
 // 事件
 const emit = defineEmits<{
-  (e: 'clickItem', payload: SubImage): void
-  (e: 'goToMore', categoryName: string): void
+  (e: 'clickItem', payload: VideoItem): void
+  (e: 'goToMore', groupName: string, groupId: number): void // 增加 groupId
 }>()
-
-const emitClickItem = (video: SubImage) => emit('clickItem', video)
-const emitGoToMore = (categoryName: string) => emit('goToMore', categoryName)
-
-// 滚动容器
-const scrollContainer = ref<HTMLDivElement | null>(null)
-
-// 所有数据
-const allList = ref<CategoryItem[]>([
-  {
-    name: '暗网分类1',
-    mainImage: 'https://zh.sydneyssong.net/013/dda436db0c32d2580657ef273fe6ea71/2024042311024817431.webp',
-    mainTitle: 'Sexy Sluts Gina, Cindy & Karlee Love Getting Banged By Rich Guy - SCAM ANGELS',
-    mainTag: '标签',
-    src: 'https://zh.977700.com/1/index.m3u8',
-    subImages: [
-      { cover: 'https://zh.sydneyssong.net/001/000b33569db500b85b83ceb1a82f33fc/2021083100342215629.webp', src: 'https://zh.977700.com/2/index.m3u8', title: '标题1', tag: '标签1' },
-      { cover: 'https://zh.sydneyssong.net/001/001676424127571863652d41a8c64556/2021113001245014937.webp', src: 'https://zh.977700.com/3/index.m3u8', title: '标题2', tag: '标签2' },
-      { cover: 'https://zh.sydneyssong.net/001/01edd4c4e921f36770a7c27a9714ea40/2020062413594339811.webp', src: 'https://zh.977700.com/4/index.m3u8', title: '标题3', tag: '标签3' },
-      { cover: 'https://zh.sydneyssong.net/002/02b131be0441d6c7c60b8170c3dad887/2021120909453178306.webp', src: 'https://zh.977700.com/5/index.m3u8', title: '标题4', tag: '标签4' }
-    ]
-  },
-  {
-    name: '暗网分类2',
-    mainImage: 'https://zh.sydneyssong.net/002/028b7e6f16015485e199cd6bc9e7bf61/2021072422082566144.webp',
-    mainTitle: '标题5',
-    mainTag: '标签5',
-    src: 'https://zh.977700.com/002/index.m3u8',
-    subImages: [
-      { cover: 'https://zh.sydneyssong.net/015/00969e66a6d39628270dd3f5e5620ff1/2021031021345321006.webp', src: 'https://zh.977700.com/006/index.m3u8', title: '标题6', tag: '标签6' },
-      { cover: 'https://zh.sydneyssong.net/015/001425c4bcb81687e4c54d851918d875/2021111600384173132.webp', src: 'https://zh.977700.com/007/index.m3u8', title: '标题7', tag: '标签7' },
-      { cover: 'https://zh.sydneyssong.net/015/08606858fbbf9ff69185f13e8de5c3db/2021101722373843114.webp', src: 'https://zh.977700.com/008/index.m3u8', title: '标题8', tag: '标签8' },
-      { cover: 'https://zh.sydneyssong.net/015/012230c9b99c105b13f96edae4e0d033/2021100512424782382.webp', src: 'https://zh.977700.com/009/index.m3u8', title: '标题9', tag: '标签9' }
-    ]
+const emitClickItem = (payload: any) => {
+  // 主卡片（group.mainId）和子卡片（subImages）都能点
+  if (payload.id) {
+    emit('clickItem', {
+      ...payload,
+      type: 'darknet', // 必须带type参数
+      src: payload.src || payload.preview || '',
+      cover: payload.cover || payload.mainImage,
+      title: payload.title || payload.mainTitle,
+      tag: payload.tag || (payload.tags?.length ? payload.tags[0] : ''),
+      tags: payload.tags || payload.mainTags || [],
+      duration: payload.duration || payload.mainDuration,
+      coin: payload.coin || payload.mainCoin,
+      is_vip: payload.is_vip ?? payload.mainVip,
+      play_count: payload.play_count ?? payload.views ?? payload.mainViews,
+    })
   }
-  // 其余省略...
-])
+}
+const emitGoToMore = (groupName: string, groupId: number) => emit('goToMore', groupName, groupId)
 
-// 懒加载
-const {
-  visibleList,
-  isLoading,
-  noMore,
-  sentinel,
-  loadUntil
-} = useLazyLoad<CategoryItem>(allList, {
-  batchSize: 2,
-  namespace: 'darknet-recommend',
-  uniqueProps: { page: `darknet-${route.path}` },
-  customScrollRoot: scrollContainer
+// 用 store
+const darknetStore = useDarknetStore()
+const { loading, currentPage, totalPages } = storeToRefs(darknetStore)
+
+const props = defineProps({
+  groups: {
+    type: Array,
+    default: () => []
+  }
 })
 
-// 滚动记忆
-function getScrollKey(): string {
-  return `darknet-recommend-scroll-${route.path}`
-}
-
-function recordScroll(): void {
-  if (scrollContainer.value) {
-    const top = scrollContainer.value.scrollTop
-    sessionStorage.setItem(getScrollKey(), top.toString())
+// 结构适配函数
+function adaptGroupToCategoryBlock(group: GroupItem) {
+  const videos = group.videos || []
+  const main = videos[0] || {}
+  const subImages = videos.slice(1, 5).map(v => ({
+    id: v.id,
+    cover: v.cover,
+    title: v.title,
+    tag: (v.tags && v.tags.length) ? v.tags[0] : '',
+    tags: v.tags,
+    src: v.preview || '',
+    views: v.play_count || 0,
+    duration: v.duration || '',
+    vip: !!v.is_vip,
+    coin: v.coin,
+  }))
+  return {
+    id: group.id,
+    name: group.name,
+    icon: group.icon,
+    mainId: main.id,
+    mainImage: main.cover,
+    mainTitle: main.title,
+    mainTag: (main.tags && main.tags.length) ? main.tags[0] : '',
+    mainTags: main.tags || [], // 👈 加这一行
+    mainViews: main.play_count || 0,
+    mainDuration: main.duration || '',
+    src: main.preview || '',
+    mainVip: !!main.is_vip,
+    mainCoin: main.coin,
+    subImages,
   }
 }
 
-function restoreScroll(): void {
-  const saved = sessionStorage.getItem(getScrollKey())
-  if (saved && scrollContainer.value) {
-    const wantScroll = parseInt(saved, 10)
-    let tryCount = 0
-    let lastHeight = 0
-    function tryRestore() {
-      if (!scrollContainer.value) return
-      const nowH = scrollContainer.value.scrollHeight
-      if (nowH !== lastHeight && nowH > 0) {
-        scrollContainer.value.scrollTop = wantScroll
-        lastHeight = nowH
+// 用 props.groups 替换所有 groups
+const adaptedGroups = computed(() => props.groups.map(adaptGroupToCategoryBlock))
+
+let autoLoadCount = 0;
+const MAX_AUTO_LOAD = 1;
+
+async function loadMore() {
+  if (!props.groups || props.groups.length === 0) return;
+  if (loading.value || noMore.value) return;
+  if (autoLoadCount >= MAX_AUTO_LOAD) return;
+  autoLoadCount++;
+
+  await darknetStore.loadHome({ page: currentPage.value + 1, pageSize: 3 });
+}
+
+const recommendPageRef = ref<HTMLElement | null>(null)
+let scrollContainer: HTMLElement | null = null
+
+function findScrollParent(el: HTMLElement | null): HTMLElement | null {
+  let node = el
+  while (node) {
+    const style = window.getComputedStyle(node)
+    if (/(auto|scroll)/.test(style.overflowY)) return node
+    node = node.parentElement
+  }
+  return null
+}
+
+function handleScroll() {
+  if (loading.value) return; // 防止重复加载
+
+  let scrollTop, clientHeight, scrollHeight
+  if (scrollContainer) {
+    scrollTop = scrollContainer.scrollTop
+    clientHeight = scrollContainer.clientHeight
+    scrollHeight = scrollContainer.scrollHeight
+  } else {
+    scrollTop = window.scrollY
+    clientHeight = window.innerHeight
+    scrollHeight = document.documentElement.scrollHeight
+  }
+  // 添加 200px 阈值
+  if (scrollTop + clientHeight >= scrollHeight - 200) {
+    loadMore();
+  }
+}
+
+onMounted(() => {
+  
+  const initScrollListener = () => {
+    nextTick(() => {
+      scrollContainer = findScrollParent(recommendPageRef.value);
+      if (scrollContainer) {
+        scrollContainer.addEventListener('scroll', handleScroll);
+      } else {
+        window.addEventListener('scroll', handleScroll);
       }
-      tryCount++
-      if (tryCount < 20) setTimeout(tryRestore, 40)
-    }
-    tryRestore()
+    });
+  };
+
+  // 如果已有数据，立即初始化
+  if (props.groups && props.groups.length > 0) {
+    initScrollListener();
+  } else {
+    // 否则等待数据加载
+    const unwatch = watch(() => props.groups, (newVal) => {
+      if (newVal && newVal.length > 0) {
+        initScrollListener();
+        unwatch();
+      }
+    });
+  }
+});
+
+onUnmounted(() => {
+  if (scrollContainer) {
+    scrollContainer.removeEventListener('scroll', handleScroll)
+  } else {
+    window.removeEventListener('scroll', handleScroll)
+  }
+})
+
+const noMore = computed(() => currentPage.value >= totalPages.value);
+
+async function refreshGroup(groupId: number) {
+  // 1. 拉取新的视频（随机5个）
+  const res = await fetchDarknetGroupVideos(groupId, { pageSize: 5, random: 1 });
+  // 2. 找到分组并更新
+  const group = props.groups.find(g => g.id === groupId);
+  if (group) {
+    group.videos = res.list || [];
   }
 }
-
-// 生命周期
-onActivated(async () => {
-  await loadUntil(0)
-  await nextTick()
-  restoreScroll()
-})
 </script>
 <style scoped>
 .recommend-page {
   padding: 0 3.2vw; /* 12px */
   box-sizing: border-box;
-}
-.load-more-trigger {
-  height: 13.3vw; /* 50px */
-  margin-top: 5.3vw; /* 20px */
 }
 .loading-tip {
   display: flex;
@@ -180,9 +243,9 @@ onActivated(async () => {
 }
 .no-more-text {
   text-align: center;
-  color: #999;
+  color: #fff; /* 改成白色 */
   font-weight: bold;
-  font-size: 3.7vw; /* 14px */
-  margin: 5.3vw 0; /* 20px */
+  font-size: 3.7vw;
+  margin: 5.3vw 0;
 }
 </style>

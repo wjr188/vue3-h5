@@ -29,7 +29,10 @@ const keepAlivePages = ref([
   'AcgNovelRecommend',
   'AcgAnimeRecommend',
   'AllCategories',
-  'VideoRankPage' // 加上你的榜单页路由name
+  'VideoRankPage', // 加上你的榜单页路由name
+  'Darknet',
+  'Tiktok', // 添加 Tiktok 主页面
+  'TiktokDiscover',
 ])
 
 // 2. 动态生成缓存Key（兼容params和query）

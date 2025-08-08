@@ -281,11 +281,24 @@ export const useUserStore = defineStore('user', {
       return this.userInfo.longVideoUsed < this.userInfo.longVideoMax
     },
 
+    
     consumeLongVideo() {
       if (this.userInfo.longVideoUsed < this.userInfo.longVideoMax) {
         this.userInfo.longVideoUsed++
       } else {
         throw new Error('长视频观看次数已用完')
+      }
+    },
+
+    canWatchDyVideo() {
+      return this.userInfo.dyVideoUsed < this.userInfo.dyVideoMax
+    },
+
+    consumeDyVideo() {
+      if (this.userInfo.dyVideoUsed < this.userInfo.dyVideoMax) {
+        this.userInfo.dyVideoUsed++
+      } else {
+        throw new Error('抖音视频观看次数已用完')
       }
     },
   },

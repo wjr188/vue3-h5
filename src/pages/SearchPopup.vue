@@ -150,15 +150,18 @@
 
 <script setup lang="ts">
 import { ref, onMounted, onBeforeUnmount, nextTick, watch, computed, onActivated } from 'vue'
-import { useRouter } from 'vue-router'
+import { useRouter, useRoute } from 'vue-router'
 import { fetchH5AllLongVideos } from '@/api/longVideo.api'
 import { Swipe as VanSwipe, SwipeItem as VanSwipeItem, Sticky as VanSticky } from 'vant'
 import { useHotKeywordStore } from '@/store/h5HotKeyword.store'
 import CardCornerIcon from '@/components/CardCornerIcon.vue'
 
+const type = computed(() => route.query.type || 'long')
+const historyKey = computed(() => `search-history-${type.value}`)
 const router = useRouter()
+const route = useRoute()
 const keyword = ref('')
-const history = ref<string[]>(JSON.parse(localStorage.getItem('search-history') || '[]'));
+const history = ref<string[]>(JSON.parse(localStorage.getItem(historyKey.value) || '[]'))
 const hotKeywordStore = useHotKeywordStore()
 const tags = ref<string[]>([])
 const tagsLoading = ref(false)
@@ -322,20 +325,22 @@ function addHistory(word: string) {
   if (!history.value.includes(word)) {
     history.value.unshift(word)
     if (history.value.length > 10) history.value.pop()
-    localStorage.setItem('search-history', JSON.stringify(history.value))
+    localStorage.setItem(historyKey.value, JSON.stringify(history.value))
   }
 }
 
 function clearHistory() {
   history.value = []
-  localStorage.removeItem('search-history')
+  localStorage.removeItem(historyKey.value)
 }
 
 // 热门标签加载
+const hotType = computed(() => type.value === 'darknet' ? 'darknet' : 'video')
+
 async function loadHotTags() {
   tagsLoading.value = true
   try {
-    await hotKeywordStore.load('video')
+    await hotKeywordStore.load(hotType.value)
     tags.value = hotKeywordStore.list.map(item => item.keyword)
   } finally {
     tagsLoading.value = false
@@ -369,9 +374,9 @@ async function loadTabContent(tabIdx: number) {
       sort,
       page: state.page,
       pageSize,
-      keyword: searchWord
+      keyword: searchWord,
+      type: type.value // ★★★ 关键：带上type参数
     }
-    
     const res = await fetchH5AllLongVideos(params)
     
     state.list = (res.list || []).map(item => ({
@@ -436,11 +441,10 @@ async function loadMore(tabIdx = currentTab.value) {
     const params: any = {
       sort,
       page: state.page,
-      pageSize
+      pageSize,
+      type: type.value // ★★★
     }
-    if (searchWord) {
-      params.keyword = searchWord
-    }
+    if (searchWord) params.keyword = searchWord
 
     const res = await fetchH5AllLongVideos(params)
     const newList = (res.list || []).map(item => ({
@@ -473,12 +477,11 @@ function getSortByTab(tab: number) {
   return ''
 }
 
-// 跳转播放（进入详情页前保存滚动高度）
 function goToPlay(video: any) {
-  // 保存当前tab的滚动高度
   tabScrollTops.value[currentTab.value] = scrollContainer.value?.scrollTop || 0
   router.push({
     path: `/play/${video.id}`,
+    query: { type: type.value } // ★★★ 关键：带上 type
   })
 }
 

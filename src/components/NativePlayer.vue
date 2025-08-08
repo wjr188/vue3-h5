@@ -1,5 +1,5 @@
 <template>
- <div class="video-wrapper" ref="wrapperRef">
+  <div class="video-wrapper" ref="wrapperRef">
     <video
       ref="videoRef"
       class="native-player"
@@ -13,58 +13,58 @@
       :controls="forceUseNativeControls"
     ></video>
 
-    <div v-if="showPlayIcon && !forceUseNativeControls" class="center-icon icon-play">
-      <img src="/icons/play1.svg" />
-    </div>
-    <div v-if="showPauseIcon && !forceUseNativeControls" class="center-icon icon-pause">
-      <img src="/icons/pause.svg" />
+    <!-- 中间暂停图标（在播放时短暂显示反馈） -->
+    <div
+      v-if="!forceUseNativeControls && showCenterIcon"
+      class="center-icon show"
+    >
+      <img :src="isPlaying ? '/icons/pause.svg' : '/icons/play1.svg'" />
     </div>
 
-    <!-- ✅ iOS 限制提示 -->
+    <!-- iOS 限制提示 -->
     <div v-if="showIosBrowserTip" class="tip-mask">
       <div class="tip-box">
         <div class="tip-text">
           当前浏览器限制播放体验<br />
-          请使用 <span class="highlight">Safari</span> 或 <span class="highlight">Chrome</span> 打开观看
+          请使用 <span class="highlight">Safari</span> 或
+          <span class="highlight">Chrome</span> 打开观看
         </div>
         <div class="close-btn" @click.stop="showIosBrowserTip = false">✕</div>
       </div>
     </div>
 
-    <!-- ✅ Android QQ / 360 浏览器提示 -->
+    <!-- Android 限制提示 -->
     <div v-if="showAndroidBrowserTip" class="tip-mask">
       <div class="tip-box">
         <div class="tip-text">
-          当前浏览器限制播放体验<br />
-          请使用其他浏览器打开
+          当前浏览器限制播放体验<br />请使用其他浏览器打开
         </div>
         <div class="close-btn" @click.stop="showAndroidBrowserTip = false">✕</div>
       </div>
     </div>
   </div>
 </template>
+
 <script setup lang="ts">
 import { ref, onMounted, onBeforeUnmount, watch, defineExpose } from 'vue'
 import Hls from 'hls.js'
 import { useRouter } from 'vue-router'
 import { useUserStore } from '@/store/user'
-import { showConfirmDialog } from 'vant'
 
-// Store
-const userStore = useUserStore()
-const router = useRouter()
-
-// Props
+// Props & Emits
 const props = defineProps<{
   src: string
   cover: string
   shouldPlay: boolean
 }>()
 
-// Emits
 const emit = defineEmits<{
   (e: 'requestPlay'): void
-  (e: 'timeUpdate', payload: { currentTime: number; duration: number; buffered: TimeRanges }): void
+  (e: 'timeUpdate', payload: {
+    currentTime: number
+    duration: number
+    buffered: TimeRanges
+  }): void
   (e: 'played'): void
 }>()
 
@@ -72,44 +72,91 @@ const emit = defineEmits<{
 const videoRef = ref<HTMLVideoElement | null>(null)
 const wrapperRef = ref<HTMLDivElement | null>(null)
 
+// 播放状态
 const isPlaying = ref(false)
-const showPlayIcon = ref(true)
-const showPauseIcon = ref(false)
+const showCenterIcon = ref(false)
 
-let isFirstClick = false
-let hls: Hls | null = null
-
-// ✅ 环境判断
+// 环境判断
 const ua = navigator.userAgent
 const isAndroid = /Android/i.test(ua)
 const isIOS = /iP(hone|od|ad)/i.test(ua)
 const isIOSRestricted = /UCBrowser|Quark|Baidu|QQBrowser/i.test(ua)
 const isAndroidRestricted = isAndroid && /QQBrowser|360/i.test(ua)
-
-// ✅ 控制原生控件
 const forceUseNativeControls = isIOS && isIOSRestricted
-
-// ✅ 提示弹窗
 const showIosBrowserTip = ref(forceUseNativeControls)
 const showAndroidBrowserTip = ref(isAndroidRestricted)
 
-// ✅ 判断是否支持原生HLS
 const canPlayHLSNatively = (): boolean => {
   const testVideo = document.createElement('video')
   return testVideo.canPlayType('application/vnd.apple.mpegurl') !== ''
 }
 const useNativeHLS = isIOS && canPlayHLSNatively()
 
-// ✅ 播放进度 raf
+// Hls 实例
+let hls: Hls | null = null
 let rafId: number | null = null
+let iconTimer: ReturnType<typeof setTimeout> | null = null
 
+// 图标 0.5 秒后隐藏
+const showIconTemporarily = () => {
+  showCenterIcon.value = true
+  if (iconTimer) clearTimeout(iconTimer)
+  iconTimer = setTimeout(() => {
+    showCenterIcon.value = false
+  }, 500)
+}
+
+// 播放
+const play = async () => {
+  const video = videoRef.value
+  if (!video || forceUseNativeControls) return
+  try {
+    await video.play()
+    isPlaying.value = true
+    showIconTemporarily()
+    updateProgress()
+    emit('played')
+  } catch (e) {
+    console.warn('播放失败', e)
+  }
+}
+
+// 暂停
+const pause = () => {
+  const video = videoRef.value
+  if (!video || forceUseNativeControls) return
+  video.pause()
+  isPlaying.value = false
+  showIconTemporarily()
+  stopProgress()
+}
+
+// 点击视频区域
+const togglePlay = () => {
+  if (forceUseNativeControls) return
+  
+  // 如果没有播放地址，请求父组件获取播放地址
+  if (!videoRef.value?.src) {
+    emit('requestPlay')
+    return
+  }
+  
+  // 如果有播放地址，则直接切换播放/暂停
+  if (isPlaying.value) {
+    pause() // 直接暂停
+  } else {
+    play() // 直接播放
+  }
+}
+
+// 进度上报
 const updateProgress = () => {
   const video = videoRef.value
   if (video && !video.paused) {
     emit('timeUpdate', {
       currentTime: video.currentTime,
       duration: video.duration,
-      buffered: video.buffered
+      buffered: video.buffered,
     })
     rafId = requestAnimationFrame(updateProgress)
   }
@@ -121,92 +168,15 @@ const stopProgress = () => {
   }
 }
 
-const togglePlay = async () => {
-  const video = videoRef.value
-  if (!video || forceUseNativeControls) return
-
-  if (!isFirstClick) {
-    isFirstClick = true
-
-    if (!userStore.isVIP) {
-      if (!userStore.canWatchDyVideo()) {
-        await showConfirmDialog({
-          title: '温馨提示',
-          message: '抖阴观看次数已用完，请开通VIP',
-          confirmButtonText: '立即开通',
-          cancelButtonText: '取消',
-          className: 'vip-dialog',
-          closeOnClickOverlay: true
-        })
-          .then(() => {
-            router.push('/VIP')
-          })
-          .catch(() => {
-          })
-        return
-      }
-      userStore.consumeDyVideo()
-    }
-
-    video.muted = false
-    try {
-      await video.play()
-      isPlaying.value = true
-      showPlayIcon.value = true
-      setTimeout(() => (showPlayIcon.value = false), 800)
-      updateProgress()
-      emit('played')
-    } catch (e) {
-      console.warn('第一次播放失败', e)
-    }
-    return
-  }
-
-  if (video.paused) {
-    try {
-      await video.play()
-      isPlaying.value = true
-      showPlayIcon.value = true
-      setTimeout(() => (showPlayIcon.value = false), 800)
-      updateProgress()
-    } catch (e) {
-      console.warn('播放失败', e)
-    }
-  } else {
-    video.pause()
-    isPlaying.value = false
-    showPauseIcon.value = true
-    setTimeout(() => (showPauseIcon.value = false), 800)
-    stopProgress()
-  }
-}
-
+// 监听 shouldPlay
 watch(
   () => props.shouldPlay,
-  async (val) => {
-    const video = videoRef.value
-    if (
-      val &&
-      isFirstClick &&
-      video &&
-      !video.ended &&
-      !video.seeking &&
-      video.paused &&
-      !forceUseNativeControls
-    ) {
-      try {
-        await video.play()
-        isPlaying.value = true
-        showPlayIcon.value = false
-        updateProgress()
-        emit('played')
-      } catch (e) {
-        console.warn('自动播放失败', e)
-      }
-    }
+  (val) => {
+    val ? play() : pause()
   }
 )
 
+// 监听 src
 watch(
   () => props.src,
   (newSrc) => {
@@ -214,12 +184,12 @@ watch(
   }
 )
 
+// 加载视频
 const loadVideo = (source: string) => {
   const video = videoRef.value
   if (!video || !source) return
 
   stopProgress()
-
   if (hls) {
     hls.destroy()
     hls = null
@@ -243,15 +213,16 @@ const loadVideo = (source: string) => {
 
   video.addEventListener('loadeddata', onLoadedData)
   video.addEventListener('error', onError)
+
+  if (props.shouldPlay) setTimeout(play, 100)
 }
 
-function onLoadedData() {
-}
-
+function onLoadedData() {}
 function onError() {
   console.error('视频加载失败')
 }
 
+// 生命周期
 onMounted(() => {
   loadVideo(props.src)
   if (wrapperRef.value) {
@@ -275,19 +246,18 @@ onBeforeUnmount(() => {
   }
 })
 
+// 暴露给父组件
 defineExpose({
   seekTo(time: number) {
     const video = videoRef.value
-    if (video) {
-      video.currentTime = time
-      if (video.paused) {
-        video.play().catch(() => {})
-        isPlaying.value = true
-        updateProgress()
-      }
-    }
-  }
+    if (!video) return
+    video.currentTime = time
+    if (video.paused) play()
+  },
+  play,
+  pause,
 })
+
 </script>
 <style scoped>
 .video-wrapper {
@@ -326,7 +296,7 @@ defineExpose({
   align-items: center;
   justify-content: center;
   z-index: 5;
-  pointer-events: none;
+  pointer-events: auto; /* ← 改成 auto，按钮可点击 */
 }
 .center-icon img {
   width: 7.5vw; /* 28px */
@@ -371,5 +341,24 @@ defineExpose({
   font-size: 5.3vw; /* 20px */
   color: #999;
   cursor: pointer;
+}
+.center-icon {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  width: 19.2vw;
+  height: 19.2vw;
+  border-radius: 50%;
+  background: rgba(0, 0, 0, 0.5);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 5;
+  opacity: 0;
+  transition: opacity 0.2s;
+}
+.center-icon.show {
+  opacity: 1;
 }
 </style>

@@ -143,8 +143,14 @@ function setSlideRef(el: Element | ComponentPublicInstance | null, i: number) {
     slideRefs.value[i] = null
   }
 }
-function setSentinelRef(el: HTMLElement | null, i: number) {
-  sentinelRefs.value[i] = el;
+function setSentinelRef(el: Element | ComponentPublicInstance | null, i: number) {
+  if (el instanceof HTMLElement) {
+    sentinelRefs.value[i] = el;
+  } else if (el && (el as any).$el instanceof HTMLElement) {
+    sentinelRefs.value[i] = (el as any).$el;
+  } else {
+    sentinelRefs.value[i] = null;
+  }
 }
 function onSwiperReady(swiper: SwiperCore) {
   swiperInstance.value = swiper
@@ -384,7 +390,16 @@ async function initPage() {
 
 onMounted(async () => {
   // 检查是否是刷新（页面首次加载）
-  if (performance.navigation.type === 1 || performance.getEntriesByType('navigation')[0]?.type === 'reload') {
+  const isRefresh = (() => {
+    try {
+      const navEntries = performance.getEntriesByType('navigation') as PerformanceNavigationTiming[];
+      return navEntries.length > 0 && navEntries[0].type === 'reload';
+    } catch (error) {
+      // 兼容旧浏览器
+      return false;
+    }
+  })();
+  if (isRefresh) {
     // 清理所有分类缓存
     Object.keys(sessionStorage).forEach(key => {
       if (key.startsWith('cat-data-') || key.startsWith('cat-page-') || key.startsWith('cat-hasMore-') || key.startsWith('cat-video-')) {
@@ -530,10 +545,17 @@ onBeforeUnmount(() => {
 
 async function refreshCategory(categoryId: number) {
   await longVideoStore.loadH5CategoryVideos(categoryId, 1, 6);
-  // 先赋值
+  // 更新 videoBasicData
   videoBasicData.value[categoryId] = [...longVideoStore.list];
-  // 再整体替换，强制触发响应式
   videoBasicData.value = { ...videoBasicData.value };
+
+  // 👇 同步更新 categoryList（即 getCategoryState）
+  const state = getCategoryState(currentCategory.value);
+  state.data = state.data.map(cat =>
+    cat.id === categoryId
+      ? { ...cat, videos: [...longVideoStore.list] }
+      : cat
+  );
 }
 
 const recommendHasMore = computed(() => {

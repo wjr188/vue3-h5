@@ -117,7 +117,8 @@
 </template>
 
 <script setup lang="ts">
-import { ref, watch, nextTick, onActivated, onBeforeUnmount, onMounted } from 'vue';
+import { ref, watch, nextTick, onActivated, onBeforeUnmount } from 'vue';
+import type { ComponentPublicInstance } from 'vue';
 import { fetchLongVideoRank } from '@/api/longVideo.api';
 import CardCornerIcon from './CardCornerIcon.vue';
 import { useRouter } from 'vue-router'
@@ -130,7 +131,16 @@ const subTabs = ['日榜', '周榜', '月榜', '年榜'];
 const mainTab = ref<number>(0);
 const subTab = ref<number>(0);
 
-const tabStates = ref(
+interface TabState {
+  allVideos: any[];
+  visibleList: any[];
+  isLoading: boolean;
+  noMore: boolean;
+  hasLoaded: boolean;
+  scrollTop?: number;
+}
+
+const tabStates = ref<TabState[][]>(
   Array.from({ length: mainTabs.length }, () =>
     Array.from({ length: subTabs.length }, () => ({
       allVideos: [],
@@ -138,6 +148,7 @@ const tabStates = ref(
       isLoading: false,
       noMore: false,
       hasLoaded: false,
+      scrollTop: 0,
     }))
   )
 );
@@ -221,13 +232,14 @@ function currentTabState(mainIdx = mainTab.value, subIdx = subTab.value) {
 
 
 // 懒加载相关
-const sentinels = ref<HTMLElement[]>([]);
+const sentinels = ref<(HTMLElement | null)[]>([]);
 const observers = ref<(IntersectionObserver | null)[]>([]);
 
-function setSentinel(el: HTMLElement | null, idx: number) {
-  sentinels.value[idx] = el!
-  if (el) {
-    nextTick(() => initObserver(idx))
+function setSentinel(el: Element | ComponentPublicInstance | null, idx: number) {
+  const htmlEl = el as HTMLElement | null;
+  if (htmlEl) {
+    sentinels.value[idx] = htmlEl;
+    nextTick(() => initObserver(idx));
   }
 }
 
@@ -298,10 +310,11 @@ async function loadRankData(mainIdx = mainTab.value, subIdx = subTab.value) {
       action: actionMap[mainIdx],
       range: rangeMap[subIdx],
     };
-    const data = await fetchLongVideoRank(params);
+    const response = await fetchLongVideoRank(params);
+    const data = response.data || response; // 处理可能的 axios 响应格式
     
 
-    state.allVideos = data.map((item: any) => ({
+    state.allVideos = (Array.isArray(data) ? data : []).map((item: any) => ({
       id: item.video_id,
       title: item.title,
       cover: item.cover,
@@ -362,7 +375,7 @@ function formatDuration(sec: number | string | undefined): string {
   const ss = s % 60;
   return `${m.toString().padStart(2, '0')}:${ss.toString().padStart(2, '0')}`;
 }
-function getRankType(index: number): string {
+function getRankType(index: number): 'danger' | 'warning' | 'success' | 'default' {
   if (index === 0) return 'danger';
   if (index === 1) return 'warning';
   if (index === 2) return 'success';
@@ -379,10 +392,6 @@ function goBack(): void {
 }
 
 const tabScrollRefs = ref<(HTMLElement | null)[]>([])
-const tabScrollTops = ref<number[]>(Array(subTabs.length).fill(0))
-
-let scrollTimer: ReturnType<typeof setTimeout> | null = null
-const scrollTimers = ref<number[]>([])
 
 // 数据加载后自动恢复滚动
 watch(
@@ -392,11 +401,9 @@ watch(
       nextTick(() => {
         const state = tabStates.value[mainTab.value][subTab.value];
         const el = tabScrollRefs.value[subTab.value];
-        if (el && state.scrollTop > 0) {
+        if (el && (state.scrollTop || 0) > 0) {
           setTimeout(() => {
-            const idx = subTab.value; // 修复：声明 idx
-            
-            el.scrollTop = state.scrollTop;
+            el.scrollTop = state.scrollTop || 0;
           }, 50)
         }
       })
@@ -432,9 +439,10 @@ function setTabScrollRef(idx: number) {
     if (el) {
       tabScrollRefs.value[idx] = el;
       // 激活时立即恢复位置
-      if (tabStates.value[mainTab.value][idx].scrollTop > 0) {
+      const scrollTop = tabStates.value[mainTab.value][idx].scrollTop || 0;
+      if (scrollTop > 0) {
         nextTick(() => {
-          el.scrollTop = tabStates.value[mainTab.value][idx].scrollTop;
+          el.scrollTop = scrollTop;
         });
       }
     }

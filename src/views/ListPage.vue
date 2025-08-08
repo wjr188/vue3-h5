@@ -103,6 +103,8 @@ import { fetchLongVideoByCategory } from '@/api/longVideo.api'
 import { fetchRecommendGroupVideos } from '@/api/h5LongVideo.api'
 import { useLongVideoStore } from '@/store/longVideoStore'
 import { useH5LongVideoStore } from '@/store/h5LongVideo.store'
+import { fetchDarknetCategoryVideos, fetchDarknetGroupVideos } from '@/api/darknet.api'
+import { useDarknetStore } from '@/store/darknet.store' // 或 useDarknetGroupStore
 import CardCornerIcon from '@/components/CardCornerIcon.vue'
 import { useLazyLoad } from '@/composables/useLazyLoad'
 
@@ -127,6 +129,7 @@ const groupId = route.query.groupId
 
 const longVideoStore = useLongVideoStore()
 const h5LongVideoStore = useH5LongVideoStore()
+const darknetStore = useDarknetStore() // 如果你有暗网专用store
 
 const debounce = (func: Function, delay: number) => {
   let timer: any = null
@@ -195,7 +198,21 @@ onMounted(async () => {
   const cacheKey = groupId ? Number(groupId) : categoryId
   tabs.forEach((tab, idx) => {
     const tabKey = getTabKey(idx)
+    // 暗网缓存判断
     if (
+      route.query.type === 'darknet' &&
+      darknetStore.cache[cacheKey] &&
+      darknetStore.cache[cacheKey][tabKey] &&
+      darknetStore.cache[cacheKey][tabKey].list.length > 0
+    ) {
+      const cacheData = darknetStore.cache[cacheKey][tabKey]
+      tabStates.value[idx].list = [...cacheData.list]
+      tabStates.value[idx].page = cacheData.lastPage
+      tabStates.value[idx].hasMore = cacheData.hasMore
+      tabStates.value[idx].inited = true
+    }
+    // 长视频缓存判断
+    else if (
       longVideoStore.cache[cacheKey] &&
       longVideoStore.cache[cacheKey][tabKey] &&
       longVideoStore.cache[cacheKey][tabKey].list.length > 0
@@ -208,9 +225,8 @@ onMounted(async () => {
     }
   })
 
-  // 👇 恢复分页后自动补齐数据
+  // 👇 没有缓存就主动加载
   if (!tabStates.value[activeTab.value].inited) {
-    // 如果 page > 1，循环加载到目标页
     for (let i = 1; i < tabStates.value[activeTab.value].page; i++) {
       await loadTabData(activeTab.value, true)
     }
@@ -225,16 +241,45 @@ async function loadTabData(tabIndex: number, isLoadMore = false) {
   const state = tabStates.value[tabIndex]
   if (state.loading) return
 
+  const sort = getSortByTab(tabIndex)
+  const tabKey = sort
+  const cacheKey = groupId ? Number(groupId) : categoryId
+
+  // 暗网分类/分组缓存判断
+  if (
+    route.query.type === 'darknet' &&
+    !isLoadMore &&
+    darknetStore.cache[cacheKey] &&
+    darknetStore.cache[cacheKey][tabKey] &&
+    darknetStore.cache[cacheKey][tabKey].list.length > 0
+  ) {
+    const cacheData = darknetStore.cache[cacheKey][tabKey]
+    state.list = [...cacheData.list]
+    state.page = cacheData.lastPage
+    state.hasMore = cacheData.hasMore
+    state.inited = true
+    return
+  }
+
   state.loading = true
   try {
     const page = isLoadMore ? state.page + 1 : 1
-    const sort = getSortByTab(tabIndex)
-
     let res
-    if (groupId) {
-      console.log('ListPage groupId:', groupId)
+
+    // 暗网分组“更多”
+    if (route.query.type === 'darknet' && groupId) {
+      res = await fetchDarknetGroupVideos(Number(groupId), { page, pageSize, sort })
+    }
+    // 暗网分类“更多”
+    else if (route.query.type === 'darknet' && categoryId) {
+      res = await fetchDarknetCategoryVideos(categoryId, { page, pageSize, sort })
+    }
+    // 长视频分组“更多”
+    else if (groupId) {
       res = await fetchRecommendGroupVideos(Number(groupId), { page, pageSize, sort })
-    } else if (categoryId) {
+    }
+    // 长视频分类“更多”
+    else if (categoryId) {
       res = await fetchLongVideoByCategory(categoryId, { page, pageSize, sort })
     }
 
@@ -254,19 +299,27 @@ async function loadTabData(tabIndex: number, isLoadMore = false) {
       state.page = 1
     }
 
-    state.hasMore = newItems.length >= pageSize
+    // 判断是否还有更多
+    state.hasMore = res?.current_page < res?.total_pages
     state.inited = true
 
-    // 同步到 store，按 cacheKey+tabKey 缓存
-    const parent_id = categoryId
-    const tabKey = getTabKey(tabIndex)
-    const cacheKey = groupId ? Number(groupId) : parent_id
-    if (!longVideoStore.cache[cacheKey]) longVideoStore.cache[cacheKey] = {}
-    longVideoStore.cache[cacheKey][tabKey] = {
-      list: [...state.list],
-      total: state.list.length,
-      lastPage: state.page,
-      hasMore: state.hasMore
+    // 缓存到对应store
+    if (route.query.type === 'darknet') {
+      if (!darknetStore.cache[cacheKey]) darknetStore.cache[cacheKey] = {}
+      darknetStore.cache[cacheKey][tabKey] = {
+        list: [...state.list],
+        total: state.list.length,
+        lastPage: state.page,
+        hasMore: state.hasMore
+      }
+    } else {
+      if (!longVideoStore.cache[cacheKey]) longVideoStore.cache[cacheKey] = {}
+      longVideoStore.cache[cacheKey][tabKey] = {
+        list: [...state.list],
+        total: state.list.length,
+        lastPage: state.page,
+        hasMore: state.hasMore
+      }
     }
   } finally {
     state.loading = false

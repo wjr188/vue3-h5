@@ -11,13 +11,14 @@ export const useLongCategoryStore = defineStore("longCategory", {
     categories: [] as any[],
     children: [] as any[], // 当前主分类下的子分类
     childrenMap: {} as Record<number, any[]>, // 缓存每个主分类下的子分类
+    childrenTotal: 0, // 子分类总数
     loading: false,
   }),
   actions: {
     async loadCategories() {
       this.loading = true;
       try {
-        const res = await fetchLongVideoParentCategories();
+        const res = await fetchLongVideoParentCategories() as any;
         this.categories = Array.isArray(res.parents) ? res.parents : [];
         this.children = [];
       } finally {
@@ -27,7 +28,7 @@ export const useLongCategoryStore = defineStore("longCategory", {
     async loadChildren(parent_id: number, page = 1, page_size = 20) {
       this.loading = true;
       try {
-        const res = await fetchLongVideoChildCategories(parent_id, page, page_size);
+        const res = await fetchLongVideoChildCategories(parent_id, page, page_size) as any;
         const list = Array.isArray(res.children) ? res.children : [];
         this.childrenMap[parent_id] = list;
         this.children = list;

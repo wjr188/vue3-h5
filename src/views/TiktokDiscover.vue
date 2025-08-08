@@ -1,47 +1,67 @@
 <template>
-  <div class="discover-wrapper">
-    <!-- 二级横滑导航 -->
-    <div class="category-bar" ref="navBar">
-      <div class="category-list" ref="scrollWrap">
+  <div class="discover-wrapper" v-if="pageReady">
+    <!-- 顶部吸顶标签栏 -->
+    <div class="category-bar">
+      <div class="category-list">
         <div
-          class="category-item"
-          v-for="(cat, i) in categories"
-          :key="i"
-          :class="{ active: activeCategory === cat }"
-          @click="onCategoryClick(i, cat)"
-        >
-          {{ cat }}
-        </div>
+          v-for="(tag, i) in tags"
+          :key="tag"
+          :class="['category-item', { active: currentTag === tag }]"
+          @click="onTabClick(i)"
+        >{{ tag }}</div>
       </div>
     </div>
 
-    <!-- 横向 swiper 容器 -->
+    <!-- 横向滑动 Swiper，每个slide一个分类 -->
     <swiper
       ref="swiperRef"
       class="discover-swiper"
+      :initial-slide="currentIndex"
       :slides-per-view="1"
-      :resistance-ratio="0.3"
+      :resistance-ratio="0.2"
       :threshold="20"
       :speed="300"
       :space-between="0"
-      @slideChange="onSwiperChange"
       @swiper="onSwiperReady"
+      @slideChange="onSwiperChange"
     >
-      <swiper-slide v-for="(cat, index) in categories" :key="cat">
-        <div class="video-grid">
-          <VideoCardTiktok
-            v-for="(item, itemIndex) in videoMap[cat] || []"
-            :key="itemIndex"
-            :index="itemIndex"
-            :category="cat"
-            :cover="item.cover"
-            :views="String(item.views)"
-            :duration="item.duration"
-            :title="item.title"
-            :tag="item.tag"
-            :tags="item.tags"
-            :tagColor="item.tagColor"
-          />
+      <swiper-slide v-for="(tag, i) in tags" :key="tag">
+        <div class="slide-content" :ref="el => setSlideRef(el, i)" @scroll="onSlideScroll(i)">
+          <!-- 分类内容 -->
+          <div class="video-grid">
+            <template v-if="videoMap[tag] && videoMap[tag].length">
+              <VideoCardTiktok
+                v-for="(item, idx) in videoMap[tag]"
+                :key="item.id"
+                :id="item.id"
+                :index="idx"
+                :category="tag"
+                :cover="item.cover"
+                :views="formatPlayCount(item.views)"
+                :duration="item.duration"
+                :title="item.title"
+                :tag="item.tag"
+                :tags="item.tags"
+                :tagColor="item.tagColor"
+                :vip="item.vip"
+                :coin="item.coin"
+              />
+            </template>
+            
+            <!-- 加载更多提示 -->
+            <div v-if="loadingMap[tag]" class="loading-tip">
+              <img src="/icons/loading.svg" alt="加载中..." class="custom-spinner" />
+              <div class="loading-text">客官别走，妾身马上就好~</div>
+            </div>
+            
+            <!-- 没有更多了提示 -->
+            <div v-else-if="videoMap[tag] && videoMap[tag].length > 0 && noMoreMap[tag]" class="no-more-tip">
+              客官，妾身被你看光了，扛不住了~
+            </div>
+            
+            <!-- 暂无数据 -->
+            <div v-else-if="!videoMap[tag] || videoMap[tag].length === 0" class="empty-tip">暂无数据</div>
+          </div>
         </div>
       </swiper-slide>
     </swiper>
@@ -49,14 +69,22 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, watch } from 'vue'
+import { ref, onMounted, nextTick, onActivated } from 'vue'
 import { Swiper, SwiperSlide } from 'swiper/vue'
 import type { Swiper as SwiperType } from 'swiper'
-import { useRoute, useRouter } from 'vue-router'
+import type { ComponentPublicInstance } from 'vue'
 import 'swiper/css'
 import VideoCardTiktok from '../components/VideoCardTiktok.vue'
+import { useDouyinTagsStore } from '@/store/douyinTags.store'
+import { useDouyinVideosStore } from '@/store/douyin.store'
+
+// 定义组件名，确保 keep-alive 能正确识别
+defineOptions({
+  name: 'TiktokDiscover'
+})
 
 interface VideoItem {
+  id: string | number
   cover: string
   views: number
   duration: string
@@ -64,137 +92,327 @@ interface VideoItem {
   tag?: string
   tags?: string[]
   tagColor?: string
+  vip?: boolean
+  coin?: number
 }
 
-const route = useRoute()
-const router = useRouter()
+const tagStore = useDouyinTagsStore()
+const douyinStore = useDouyinVideosStore()
 
-const activeCategory = ref<string>('最新')
-const categories = [
-  '最新', '最热', '巨乳', '美臀', '学生', '女儿', '乱伦', '白虎', '内射', '调教', '网黄'
-]
-
+const tags = ref<string[]>([])
+const currentTag = ref<string>('')
+const currentIndex = ref(0)
 const swiperRef = ref<InstanceType<typeof Swiper> | null>(null)
 let swiperInstance: SwiperType | null = null
-
 const videoMap = ref<Record<string, VideoItem[]>>({})
+const loadingMap = ref<Record<string, boolean>>({})
+const noMoreMap = ref<Record<string, boolean>>({})
+const slideRefs = ref<(HTMLElement|null)[]>([])
+const pageReady = ref(false)
 
-const categoryFileMap: Record<string, string> = {
-  '最新': 'zui_xin',
-  '最热': 'zui_re',
-  '巨乳': 'ju_ru',
-  '美臀': 'mei_tun',
-  '学生': 'xue_sheng',
-  '女儿': 'nv_er',
-  '乱伦': 'luan_lun',
-  '白虎': 'bai_hu',
-  '内射': 'nei_she',
-  '调教': 'tiao_jiao',
-  '网黄': 'wang_huang'
-}
+const scrollPositions = ref<Record<string, number>>({})
+const pageMap = ref<Record<string, number>>({})
+const isRestoring = ref(false) // 标记是否正在恢复状态
 
-// 加载分类数据
-const loadCategoryData = async (category: string) => {
-  if (videoMap.value[category]) return
-  const fileKey = categoryFileMap[category]
-  try {
-    const module = await import(`../mock/tiktok/${fileKey}.js`)
-    videoMap.value[category] = module.default as VideoItem[]
-  } catch (err) {
-    console.error(`加载失败: ${fileKey}.js`, err)
-    videoMap.value[category] = []
+// 防抖保存到 sessionStorage
+let saveToStorageTimer: ReturnType<typeof setTimeout> | null = null
+function debouncedSaveToStorage() {
+  if (saveToStorageTimer) {
+    clearTimeout(saveToStorageTimer)
   }
+  saveToStorageTimer = setTimeout(() => {
+    sessionStorage.setItem('tiktokDiscoverScroll', JSON.stringify({
+      scrollPositions: scrollPositions.value,
+      currentTag: currentTag.value,
+      currentIndex: currentIndex.value
+    }))
+  }, 200) // 200ms 防抖
 }
 
-// 点击分类
-const onCategoryClick = async (i: number, cat: string) => {
-  activeCategory.value = cat
-  router.replace({ query: { ...route.query, category: cat } })
-  await loadCategoryData(cat)
-
-  if (swiperInstance && swiperInstance.slideTo) {
-    swiperInstance.slideTo(i)
+// 播放量格式化函数
+function formatPlayCount(count: number): string {
+  if (count >= 100000) {
+    return (count / 10000).toFixed(1).replace(/\.0$/, '') + 'w'
+  } else if (count >= 1000) {
+    return (count / 1000).toFixed(1).replace(/\.0$/, '') + 'k'
   } else {
-    console.error('Swiper 实例未初始化')
+    return count.toString()
   }
 }
 
-// Swiper滑动时
-const onSwiperChange = async (swiper: SwiperType) => {
-  const cat = categories[swiper.activeIndex]
-  activeCategory.value = cat
-  router.replace({ query: { ...route.query, category: cat } })
-  await loadCategoryData(cat)
-  scrollNavToActive(swiper.activeIndex)
+// 时长格式化函数
+function formatDuration(seconds: number): string {
+  if (!seconds) return '00:00'
+  const minutes = Math.floor(seconds / 60)
+  const remainingSeconds = seconds % 60
+  return `${minutes.toString().padStart(2, '0')}:${remainingSeconds.toString().padStart(2, '0')}`
 }
 
-// Swiper初始化
-const onSwiperReady = (swiper: SwiperType) => {
+// 设置 slide ref 便于滚动等
+function setSlideRef(el: Element | ComponentPublicInstance | null, i: number) {
+  const element = el as HTMLElement | null
+  slideRefs.value[i] = element
+  // 移除在这里的滚动恢复，避免多次触发
+}
+
+// 滚动事件处理
+function onSlideScroll(i: number) {
+  const tag = tags.value[i]
+  const el = slideRefs.value[i]
+  if (el && tag === currentTag.value) {
+    // 实时保存滚动位置
+    scrollPositions.value[tag] = el.scrollTop
+    
+    // 防抖保存到 sessionStorage
+    debouncedSaveToStorage()
+    
+    const bottomOffset = el.scrollHeight - el.scrollTop - el.clientHeight
+    
+    if (bottomOffset < 200 && !loadingMap.value[tag] && !noMoreMap.value[tag]) {
+      loadTagData(tag)
+    }
+  }
+}
+
+// Swiper 初始化
+function onSwiperReady(swiper: SwiperType) {
   swiperInstance = swiper
 }
 
-// 自动滚动导航
-const scrollNavToActive = (index: number) => {
-  const tabEl = document.querySelectorAll<HTMLDivElement>('.category-item')[index]
-  const navEl = document.querySelector<HTMLDivElement>('.category-bar')
-  if (tabEl && navEl) {
-    const left = tabEl.offsetLeft - navEl.offsetWidth / 2 + tabEl.offsetWidth / 2
-    navEl.scrollTo({ left, behavior: 'smooth' })
+// 顶部 tab 点击
+function onTabClick(i: number) {
+  if (currentIndex.value === i) return
+
+  saveScroll(currentTag.value)
+
+  currentIndex.value = i
+  currentTag.value = tags.value[i]
+  swiperInstance?.slideTo(i)
+
+  // 懒加载数据
+  if (!videoMap.value[currentTag.value] && !loadingMap.value[currentTag.value]) {
+    loadTagData(currentTag.value)
+  } else {
+    // 恢复滚动位置
+    nextTick(() => {
+      restoreScroll(currentTag.value)
+    })
+  }
+
+  scrollNavToActive(i)
+}
+
+// Swiper 滑动切换
+function onSwiperChange(swiper: SwiperType) {
+  // 如果正在恢复状态，不执行任何操作
+  if (isRestoring.value) {
+    return
+  }
+  
+  // 保存当前滚动位置
+  saveScroll(currentTag.value)
+  
+  const idx = swiper.activeIndex
+  if (idx < 0 || idx >= tags.value.length) return
+  
+  currentIndex.value = idx
+  currentTag.value = tags.value[idx]
+  
+  // 懒加载
+  if (!videoMap.value[currentTag.value] && !loadingMap.value[currentTag.value]) {
+    loadTagData(currentTag.value)
+  }
+  
+  scrollNavToActive(idx)
+  
+  // 恢复新标签滚动位置
+  nextTick(() => {
+    restoreScroll(currentTag.value)
+  })
+}
+
+// 滚动标签到激活可视区域
+function scrollNavToActive(index: number) {
+  nextTick(() => {
+    const tabEl = document.querySelectorAll<HTMLDivElement>('.category-item')[index]
+    const navEl = document.querySelector<HTMLDivElement>('.category-bar')
+    if (tabEl && navEl) {
+      const left = tabEl.offsetLeft - navEl.offsetWidth / 2 + tabEl.offsetWidth / 2
+      navEl.scrollTo({ left, behavior: 'smooth' })
+    }
+  })
+}
+
+// 保存滚动位置
+function saveScroll(tag: string) {
+  const idx = tags.value.indexOf(tag)
+  const el = slideRefs.value[idx]
+  if (el) {
+    scrollPositions.value[tag] = el.scrollTop
+    // 保存到 sessionStorage
+    sessionStorage.setItem('tiktokDiscoverScroll', JSON.stringify({
+      scrollPositions: scrollPositions.value,
+      currentTag: currentTag.value,
+      currentIndex: currentIndex.value
+    }))
   }
 }
 
-// 页面加载时初始化
-onMounted(async () => {
-  const initialCategory = route.query.category as string | undefined
-  if (initialCategory && categories.includes(initialCategory)) {
-    activeCategory.value = initialCategory
-    await loadCategoryData(initialCategory)
-    const index = categories.indexOf(initialCategory)
-    if (swiperInstance) {
-      swiperInstance.slideTo(index)
-    }
-    scrollNavToActive(index)
-  } else {
-    await loadCategoryData(activeCategory.value)
+// 恢复滚动位置
+function restoreScroll(tag: string) {
+  const idx = tags.value.indexOf(tag)
+  const el = slideRefs.value[idx]
+  const scrollTo = scrollPositions.value[tag] || 0
+  
+  if (!el || scrollTo === 0) {
+    return
   }
+  
+  nextTick(() => {
+    setTimeout(() => {
+      if (el && el.scrollHeight > el.clientHeight) {
+        el.scrollTop = scrollTo
+      }
+    }, 150)
+  })
+}
+
+const PAGE_SIZE = 20
+
+// 懒加载分类视频
+async function loadTagData(tag: string) {
+  if (loadingMap.value[tag] || noMoreMap.value[tag]) return
+  loadingMap.value[tag] = true
+  const page = pageMap.value[tag] || 1
+
+  try {
+    const res = await douyinStore.loadDiscoverVideos(tag, page)
+    const newList = (res || []).map((item: any) => ({
+      id: item.id ?? item.cover ?? Math.random(),
+      cover: item.cover || '',
+      views: item.views || 0,
+      duration: item.duration && typeof item.duration === 'number' 
+        ? formatDuration(item.duration) 
+        : item.duration || '00:00',
+      title: item.title || '',
+      tags: item.tags || [],
+      tag: item.tags?.[0] || '',
+      tagColor: '#ff2c55',
+      vip: item.vip || false,
+      coin: item.coin || 0
+    }))
+    if (!videoMap.value[tag]) {
+      videoMap.value[tag] = []
+    }
+    // 去重
+    const oldIds = new Set(videoMap.value[tag].map(v => v.id))
+    const filteredList = newList.filter(v => !oldIds.has(v.id))
+    videoMap.value[tag] = [...videoMap.value[tag], ...filteredList]
+    pageMap.value[tag] = page + 1
+    noMoreMap.value[tag] = newList.length < PAGE_SIZE
+    
+    await nextTick()
+    
+  } catch (error) {
+    console.error(`加载标签 ${tag} 数据失败:`, error)
+  } finally {
+    setTimeout(() => {
+      loadingMap.value[tag] = false
+    }, 300)
+  }
+}
+
+// 初始化
+onMounted(async () => {
+  await tagStore.loadTags()
+  tags.value = [...tagStore.tags]
+  if (tags.value.length === 0) return
+  
+  // 初始化默认状态
+  tags.value.forEach(tag => {
+    scrollPositions.value[tag] = 0
+  })
+  currentTag.value = tags.value[0]
+  currentIndex.value = 0
+  
+  pageReady.value = true
+  
+  // 加载当前标签数据
+  await loadTagData(currentTag.value)
 })
 
-// 监听URL改变
-watch(
-  () => route.query.category,
-  async (newCat) => {
-    if (typeof newCat === 'string' && categories.includes(newCat)) {
-      activeCategory.value = newCat
-      const index = categories.indexOf(newCat)
-      await loadCategoryData(newCat)
-      if (swiperInstance) {
-        swiperInstance.slideTo(index)
+// keep-alive 激活时恢复状态
+onActivated(() => {
+  // 从 sessionStorage 恢复状态
+  const saved = sessionStorage.getItem('tiktokDiscoverScroll')
+  if (saved) {
+    try {
+      const { scrollPositions: savedScrollPositions, currentTag: savedTag, currentIndex: savedIndex } = JSON.parse(saved)
+      
+      // 恢复滚动位置数据
+      scrollPositions.value = { ...scrollPositions.value, ...savedScrollPositions }
+      
+      // 如果有保存的标签状态且与当前状态不同，恢复它
+      if (savedTag && tags.value.includes(savedTag) && savedTag !== currentTag.value) {
+        // 设置恢复状态标记
+        isRestoring.value = true
+        
+        currentTag.value = savedTag
+        currentIndex.value = savedIndex
+        
+        // 切换到保存的标签（不触发数据重新加载）
+        if (swiperInstance) {
+          swiperInstance.slideTo(savedIndex, 0) // 0ms 动画时间，立即切换
+        }
+        
+        // 清除恢复状态标记
+        nextTick(() => {
+          setTimeout(() => {
+            isRestoring.value = false
+          }, 50)
+        })
       }
-      scrollNavToActive(index)
+      
+      // 恢复滚动位置（无论标签是否切换都需要恢复）
+      const targetTag = savedTag && tags.value.includes(savedTag) ? savedTag : currentTag.value
+      const savedScrollPos = savedScrollPositions[targetTag] || 0
+      
+      if (savedScrollPos > 0) {
+        nextTick(() => {
+          setTimeout(() => {
+            restoreScroll(targetTag)
+          }, 100) // 减少延迟
+        })
+      }
+      
+    } catch (error) {
+      console.error('恢复状态失败:', error)
     }
+  } else {
+    // 首次进入，没有保存状态
   }
-)
+})
 </script>
 
 <style scoped>
 .discover-wrapper {
   background: #000;
-  min-height: 100vh;
+  height: 100vh;
   color: #fff;
   box-sizing: border-box;
-  overflow-y: hidden;
-  padding-top: 10.66vw; /* 40px */
+  overflow: hidden;
+  padding-top: 10.66vw;
 }
-
 .category-bar {
   position: fixed;
-  top: 13.33vw; /* 50px */
+  top: 13.33vw;
   width: 100%;
-  z-index: 98;
+  z-index: 10; /* 降低z-index，避免影响角标 */
   background-color: #000;
   overflow-x: auto;
   white-space: nowrap;
-  padding: 1.6vw 0; /* 6px */
+  padding: 1.6vw 0;
+  height: 10.66vw; /* 明确设置高度 */
   -ms-overflow-style: none;
   scrollbar-width: none;
 }
@@ -203,37 +421,85 @@ watch(
 }
 .category-list {
   display: inline-flex;
-  gap: 2.66vw; /* 10px */
-  padding: 0 1.6vw; /* 6px */
+  gap: 2.66vw;
+  padding: 0 1.6vw;
   min-width: max-content;
 }
 .category-item {
-  font-size: 3.73vw; /* 14px */
+  font-size: 3.73vw;
   color: #ccc;
-  padding: 1.06vw 3.2vw; /* 4px 12px */
-  border-radius: 1.33vw; /* 5px */
+  padding: 1.06vw 3.2vw;
+  border-radius: 1.33vw;
   background-color: #2c2c2e;
   white-space: nowrap;
   transition: all 0.2s;
   box-shadow: inset 0 0 0.26vw #3a3a3a;
+  cursor: pointer;
 }
 .category-item.active {
   background-color: #ff2c55;
   color: #fff;
   font-weight: bold;
 }
-
 .discover-swiper {
-  margin-top: 10.66vw; /* 40px */
-  min-height: calc(100vh - 34.66vw); /* 130px */
+  margin-top: 10.66vw;
+  height: calc(100vh - 34.66vw); /* 精确计算：100vh - 顶部padding(10.66vw) - 分类栏高度和位置(24vw) */
 }
-
+.slide-content {
+  height: 100%;
+  overflow-y: auto;
+  background: #000;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: none;
+}
+.slide-content::-webkit-scrollbar {
+  display: none !important;
+  width: 0 !important;
+  height: 0 !important;
+  background: transparent !important;
+}
 .video-grid {
   display: grid;
   grid-template-columns: 1fr 1fr;
-  gap: 2.66vw; /* 10px */
-  padding: 2.66vw; /* 10px */
-  padding-bottom: 16vw;
+  gap: 2.66vw;
+  padding: 2.66vw;
+  padding-bottom: 24vw; /* 原来是16vw，建议调大 */
   box-sizing: border-box;
+}
+.empty-tip {
+  color: #999;
+  text-align: center;
+  padding: 20px 0;
+  grid-column: 1 / -1;
+}
+.loading-tip {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 5.3vw 0;
+  font-size: 3.73vw;
+  grid-column: 1 / -1;
+}
+.custom-spinner {
+  width: 9.3vw;
+  height: 9.3vw;
+  margin-bottom: 2.1vw;
+  animation: spin 0.8s linear infinite;
+}
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+.loading-text {
+  font-size: 3.2vw;
+  color: #ff5f5f;
+  font-weight: 500;
+}
+.no-more-tip {
+  font-size: 3.73vw;
+  color: #999;
+  text-align: center;
+  font-weight: bold;
+  margin: 5.3vw 0;
+  grid-column: 1 / -1;
 }
 </style>

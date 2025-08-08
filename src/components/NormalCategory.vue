@@ -11,7 +11,7 @@
           />
           <span>{{ category.name }}</span>
         </div>
-        <div class="block-more" @click="onGoToMore(category.name)">➤</div>
+        <div class="block-more" @click="onGoToMore(isDarknet ? category : category.name)">➤</div>
       </div>
       <div class="sub-images">
         <div
@@ -41,7 +41,7 @@
         </div>
       </div>
       <div class="action-buttons">
-        <button class="btn outline" @click="onGoToMore(category.name)">
+        <button class="btn outline" @click="onGoToMore(isDarknet ? category : category.name)">
           <img src="/static/more1.png" class="btn-icon" /> 查看更多
         </button>
         <button class="btn outline" @click="emit('refresh', category.id)">
@@ -67,7 +67,7 @@ const emit = defineEmits<{
 const props = defineProps<{
   categoryList: any[]
   categoryName: string
-  videoBasicData: Record<number, any[]>
+  videoBasicData?: Record<string, any[]> // 改成 Record<string, any[]>
   dark?: boolean
 }>()
 
@@ -106,17 +106,38 @@ onActivated(() => {
 
 // 内容渲染
 function getVideoList(categoryId: number) {
-  const apiList = props.videoBasicData[categoryId]
-  if (apiList && apiList.length > 0) {
-    return apiList.map(v => ({
+  const key = String(categoryId);
+  
+
+  // 暗网模式：直接从 videoBasicData 获取
+  if (isDarknet.value && props.videoBasicData) {
+    const videoList = props.videoBasicData[key] || [];
+    
+
+    return videoList.map(v => ({
+      ...v,
+      cover: v.cover || v.cover_url,
+      title: v.title || v.name || '',
+      tags: Array.isArray(v.tags) ? v.tags : [],
+      vip: v.vip ?? v.is_vip ?? false,
+      coin: v.coin ?? v.gold ?? 0,
+      play: v.play ?? v.play_count ?? 0,
+      duration: v.duration ?? 0
+    }));
+  }
+
+  // 其它情况走原有逻辑
+  const category = props.categoryList.find(c => c.id === categoryId);
+  if (category && Array.isArray(category.videos)) {
+    return category.videos.map(v => ({
       ...v,
       cover: v.cover || v.cover_url
-    })).sort((a, b) => (a.sort ?? 0) - (b.sort ?? 0))
+    })).sort((a, b) => (a.sort ?? 0) - (b.sort ?? 0));
   }
-  return []
+  return [];
 }
-function onGoToMore(name: string) {
-  emit('goToMore', name)
+function onGoToMore(payload: any) {
+  emit('goToMore', payload)
 }
 function logAndGoToPlay(video: any) {
   emit('clickItem', video)
@@ -143,8 +164,7 @@ function formatPlayCount(count: number): string {
 .normal-category {
   padding-bottom: 3.2vw; /* 12px */
 }
-.normal-category.dark .block-title,
-.normal-category.dark .title {
+.normal-category.dark .block-title {
   color: #fff;
 }
 .category-block {

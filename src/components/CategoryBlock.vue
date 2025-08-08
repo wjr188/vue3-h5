@@ -29,43 +29,41 @@
       <div class="duration">{{ formatDuration(category.mainDuration) }}</div>
     </div>
   </div>
-  <div class="title">{{ category.mainTitle }}</div>
+  <div class="main-title">{{ category.mainTitle }}</div>
   <div class="tags" v-if="category.mainTags && category.mainTags.length">
-  <span class="tag" v-for="(t, i) in category.mainTags" :key="i">{{ t }}</span>
-</div>
-<!-- 兼容老数据 -->
-<div class="tag" v-else-if="category.mainTag">{{ category.mainTag }}</div>
-</div>
-
-    <!-- 子图卡片（2x2） -->
-    <div class="sub-images">
-      <div
-  v-for="(item, index) in shuffledSubImages"
-  :key="item.id"
-  class="sub-card"
-  @click="emitClick(item)"
-  data-stop-swipe
->
-
-
-        <div class="cover-wrapper">
-  <img v-lazy="item.cover" class="sub-image" alt="子图" />
-  <CardCornerIcon :isVip="item.vip" :coinAmount="item.coin" />
-  <div class="meta">
-    <div class="views">
-      <img src="/icons/play4.svg" class="play-icon" />
-      {{ (item.views / 10000).toFixed(1) }}w
-    </div>
-    <div class="duration">{{ formatDuration(item.duration) }}</div>
+    <span class="tag" v-for="(t, i) in category.mainTags" :key="i">{{ t }}</span>
   </div>
+  <!-- 兼容老数据 -->
+  <div class="tag" v-else-if="category.mainTag">{{ category.mainTag }}</div>
 </div>
-<div class="title">{{ item.title }}</div>
-<div class="tag" v-if="item.tags && item.tags.length">
-  {{ item.tags[0] }}
-</div>
-<div class="tag" v-else-if="item.tag">{{ item.tag }}</div>
+
+<!-- 子图卡片（2x2） -->
+<div class="sub-images">
+  <div
+    v-for="(item, index) in shuffledSubImages"
+    :key="item.id"
+    class="sub-card"
+    @click="emitClick(item)"
+    data-stop-swipe
+  >
+    <div class="cover-wrapper">
+      <img v-lazy="item.cover" class="sub-image" alt="子图" />
+      <CardCornerIcon :isVip="item.vip" :coinAmount="item.coin" />
+      <div class="meta">
+        <div class="views">
+          <img src="/icons/play4.svg" class="play-icon" />
+          {{ (item.views / 10000).toFixed(1) }}w
+        </div>
+        <div class="duration">{{ formatDuration(item.duration) }}</div>
       </div>
     </div>
+    <div class="sub-title">{{ item.title }}</div>
+    <div class="tag" v-if="item.tags && item.tags.length">
+      {{ item.tags[0] }}
+    </div>
+    <div class="tag" v-else-if="item.tag">{{ item.tag }}</div>
+  </div>
+</div>
 
     <!-- 查看更多 + 更换一批 -->
     <div class="action-buttons" data-stop-swipe>
@@ -260,6 +258,33 @@ function formatDuration(duration?: string | number) {
   word-break: break-word;
   height: calc(1.4em * 2);           /* 固定两行高度 */
   margin-top: 1vw;
+}
+.main-title {
+  font-size: 3.6vw;
+  color: #222;
+  font-weight: bold;
+  margin-top: 1vw;
+  line-height: 1.4;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  word-break: break-word;
+  height: calc(1.4em * 2);
+}
+.sub-title {
+  font-size: 3.6vw;
+  color: #222;
+  margin-top: 1vw;
+  line-height: 1.4;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  word-break: break-word;
+  height: calc(1.4em * 2);
 }
 .tag {
   font-size: 3.2vw; /* 12px */

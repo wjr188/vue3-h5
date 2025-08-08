@@ -9,6 +9,11 @@ export const useH5LongVideoStore = defineStore("h5LongVideo", {
     detailLoading: false,
     lastFetchTime: 0, // 推荐页缓存时间戳
     cacheDuration: 5 * 60 * 1000, // 5分钟缓存
+    // 分页相关属性
+    currentPage: 1,
+    totalPages: 1,
+    total: 0,
+    perPage: 3,
     // 新增：分组视频缓存
     groupCache: {} as Record<string, {
       list: any[];
