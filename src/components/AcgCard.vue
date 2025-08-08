@@ -30,27 +30,30 @@
 </template>
 
 
-   <!-- 新增横图样式 -->
-<template v-else-if="resolvedType === 'videoGrid'">
-  <div class="video-grid-cover">
-    <img v-lazy="resolvedCover" alt="封面" />
-    <!-- 右上角徽章 -->
-  <div v-if="isVip" class="corner-tag">
-    <img src="/icons/vip4.png" class="corner-icon" />
-  </div>
-  <div v-else-if="coin > 0" class="corner-tag">
-    <img src="/icons/coin2.png" class="corner-icon" />
-  </div>
-    <div class="meta-overlay">
-      <div class="views">
-        <img src="/icons/play4.svg" class="play-icon" />
-        {{ formatViews(resolvedViews) }}
+ <template v-else-if="resolvedType === 'videoGrid'">
+  <div class="video-grid">
+    <div class="video-grid-cover">
+      <img v-lazy="resolvedCover" alt="封面" />
+      <!-- 右上角徽章 -->
+      <div v-if="isVip" class="corner-tag">
+        <img src="/icons/vip4.png" class="corner-icon" />
       </div>
-      <div class="duration">{{ resolvedDuration || '00:00' }}</div>
+      <div v-else-if="coin > 0" class="corner-tag">
+        <img src="/icons/coin2.png" class="corner-icon" />
+      </div>
+      <div class="meta-overlay">
+        <div class="views">
+          <img src="/icons/play4.svg" class="play-icon" />
+          {{ formatViews(resolvedViews) }}
+        </div>
+        <div class="duration">{{ formatDuration(resolvedDuration) }}</div>
+      </div>
     </div>
+    <!-- 标题放在这里，作为video-grid的子元素 -->
+    <div class="video-grid-title">{{ resolvedTitle }}</div>
   </div>
-  <div class="video-grid-title">{{ resolvedTitle }}</div>
 </template>
+
     <!-- 原始封面卡片 -->
     <template v-else>
       <div class="cover">
@@ -179,6 +182,17 @@ function handleClick() {
     src: props.data?.src ?? '',
     tags: Array.isArray(props.data?.tags) ? props.data.tags : []
   })
+}
+function formatDuration(sec: number | string) {
+  sec = Number(sec) || 0;
+  const h = Math.floor(sec / 3600);
+  const m = Math.floor((sec % 3600) / 60);
+  const s = sec % 60;
+  if (h > 0) {
+    return [h, m, s].map(i => String(i).padStart(2, '0')).join(':');
+  } else {
+    return [m, s].map(i => String(i).padStart(2, '0')).join(':');
+  }
 }
 
 function formatViews(val: number | string): string {
@@ -329,6 +343,15 @@ function formatViews(val: number | string): string {
 }
 
 /* 🟢 新增横图视频卡片 videoGrid 样式 */
+.video-grid {
+  width: 45vw;   /* 195px 换算成 vw */
+  height: 36vw; /* 155px 换算成 vw */
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-start;
+  overflow: hidden;
+}
+
 .video-grid-cover {
   position: relative;
   width: 100%;
@@ -363,7 +386,7 @@ function formatViews(val: number | string): string {
   flex-shrink: 0;
 }
 .video-grid-title {
-  margin-top: 1vw;
+  margin-top: 0.5vw;
   font-size: 3.3vw;
   color: #111;
   line-height: 1.4;
@@ -372,6 +395,9 @@ function formatViews(val: number | string): string {
   -webkit-line-clamp: 2;
   line-clamp: 2;
   overflow: hidden;
+  height: calc(3.3vw * 1.4 * 2); /* 两行文字的固定高度 */
+  min-height: calc(3.3vw * 1.4 * 2);
+  word-break: break-word;
 }
 .play-icon {
   width: 3.5vw !important;

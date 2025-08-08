@@ -1,122 +1,158 @@
 <template>
   <div class="acg-anime-wrapper">
     <div class="content-container">
-      <!-- 懒加载分页模块 -->
-      <div
-        v-for="module in visibleList"
-        :key="module.id"
-        class="recommend-module"
-      >
+      <!-- 每个模块=每个子分类 -->
+      <div v-for="module in allModules" :key="module.id" class="recommend-module">
+        <div class="module-title">
+          <div class="left-title">
+            <img v-if="module.icon" :src="`/icons/${module.icon}`" class="icon" :alt="module.moduleTitle" @error="e => (e.target.style.display='none')" />
+            {{ module.moduleTitle }}
+          </div>
+          <div class="more-btn" @click="goMore(module)">
+            <span>更多</span>
+            <img src="/icons/more-arrow.svg" class="arrow-icon" />
+          </div>
+        </div>
         <AcgSection
           :layoutType="module.layoutType"
           :data="module.items"
-          @item-click="goToPlay"
+          @item-click="goToDetail"
         />
       </div>
-
-      <div v-if="visibleList.length === 0 && !isLoading" class="empty-data-message">
+      <div v-if="allModules.length === 0 && !isLoading" class="empty-data-message">
         <p>该分类暂无动漫数据或数据加载失败...</p>
       </div>
       <div v-if="isLoading" class="loading-tip">
         <img src="/icons/loading.svg" alt="加载中..." class="custom-spinner" />
         <div class="loading-text">客官别走，妾身马上就好~</div>
       </div>
-      <div v-if="noMore && visibleList.length > 0" class="no-more-text">
+      <div v-if="noMore && allModules.length > 0" class="no-more-text">
         客官，妾身被你弄高潮了，扛不住了~
       </div>
       <div ref="sentinel" class="load-more-trigger"></div>
     </div>
   </div>
 </template>
+
 <script setup lang="ts">
-import { computed, onActivated, type Ref } from 'vue'
-import { useRouter } from 'vue-router'
+import { ref, computed, onMounted, onUnmounted, nextTick, onActivated } from 'vue'
+import { useAnimeStore } from '@/store/anime.store'
 import AcgSection from '@/components/AcgSection.vue'
-import { useLazyLoad } from '@/composables/useLazyLoad'
-
-const router = useRouter()
-
-interface AnimeItem {
-  id: string | number
-  videoUrl: string
-  title: string
-  cover: string
-  tags: string[]
-  views: number
-}
+import { useRouter } from 'vue-router'
 
 const props = defineProps<{
-  animes: any[]
   categoryTitle: string
-  activeTab: '漫画' | '动漫' | '小说' | '有声'
+  activeTab: string
   activeSubCategory: string
-  scrollContainerRef: Ref<HTMLElement | null>
-  onContentUpdated?: () => void
+  scrollContainerRef: any
+  parentCategoryId: number
 }>()
 
-// 返回当前路径
+const router = useRouter()
+const animeStore = useAnimeStore()
+
+const parentId = computed(() => props.parentCategoryId || 0)
+const subPage = computed(() =>
+  animeStore.groupMap?.[parentId.value] || {
+    subCategories: [], total: 0, page: 0, pageSize: 2, loading: false, noMore: false,
+  }
+)
+const allModules = computed(() =>
+  (animeStore.groupMap?.[parentId.value]?.subCategories || []).map(sub => ({
+    id: sub.id,
+    moduleTitle: sub.name,
+    layoutType: sub.layout_type || 'type1',
+    icon: sub.icon || '',
+    items: sub.animes || []
+  }))
+)
+
+const isLoading = computed(() => subPage.value.loading)
+const noMore = computed(() => subPage.value.noMore)
+
+const sentinel = ref<HTMLElement | null>(null)
+let observer: IntersectionObserver | null = null
+
+onMounted(() => {
+  observer = new window.IntersectionObserver(async entries => {
+    if (
+      entries[0].isIntersecting &&
+      !isLoading.value &&
+      !noMore.value
+    ) {
+      await animeStore.loadMoreGroup(parentId.value)
+    }
+  })
+  nextTick(() => {
+    if (sentinel.value) observer!.observe(sentinel.value)
+  })
+})
+onUnmounted(() => { observer && observer.disconnect() })
+
 function getCurrentFullPath() {
   return window.location.pathname + window.location.search
 }
-
-// 跳转播放页
-async function goToPlay(item: AnimeItem) {
-  // 保存滚动
+function saveScrollTop() {
   if (props.scrollContainerRef?.value) {
     const scrollTop = props.scrollContainerRef.value.scrollTop
-    const key = `acg-scroll-${props.activeTab}-${props.activeSubCategory}`
+    const key = `acg-scroll-anime-${props.categoryTitle}`
     sessionStorage.setItem(key, scrollTop.toString())
   }
-
-  sessionStorage.setItem('acg-return-from', getCurrentFullPath())
-  sessionStorage.setItem('acg-return-tab', props.activeTab || '')
-  sessionStorage.setItem('acg-return-sub', props.activeSubCategory || '')
-
-  // 动态加载详情数据
-  const module = await import(`@/mock/acg/anime/${item.id}.js`)
-  const animeData: AnimeItem = module.default
-
+}
+function goToDetail(item) {
+  saveScrollTop()
+  sessionStorage.setItem('acg-return-from', JSON.stringify({
+    name: 'Acg',
+    query: {
+      tab: props.activeTab,
+      sub: props.activeSubCategory
+    }
+  }))
+  sessionStorage.setItem('acg-return-tab', props.activeTab)
+  sessionStorage.setItem('acg-return-sub', props.activeSubCategory)
   router.push({
     name: 'PlayPage',
-    query: {
-      id: animeData.id,
-      src: encodeURIComponent(animeData.videoUrl),
-      title: animeData.title,
-      cover: animeData.cover,
-      tags: JSON.stringify(animeData.tags),
-      views: animeData.views
-    }
+    params: { id: item.id, source: props.categoryTitle },
+    query: { type: 'anime' }
   })
 }
 
-// 懒加载数据
-const allModules = computed(() => props.animes || [])
+function goMore(module) {
+  if (module.items && module.items.length > 0) {
+    saveScrollTop()
+    if (!sessionStorage.getItem('more-entry-path')) {
+      sessionStorage.setItem('more-entry-path', getCurrentFullPath())
+      sessionStorage.setItem('more-entry-scroll', props.scrollContainerRef?.value?.scrollTop?.toString() || '0')
+    }
+    sessionStorage.setItem('acg-return-from', getCurrentFullPath())
+    sessionStorage.setItem('acg-return-tab', props.activeTab)
+    sessionStorage.setItem('acg-return-sub', props.activeSubCategory)
+    sessionStorage.setItem('moduleTitle', module.moduleTitle)
+    sessionStorage.setItem('subCategoryId', module.id?.toString() || '')
+    sessionStorage.setItem(`scroll-pos-${module.moduleTitle}`, props.scrollContainerRef?.value?.scrollTop?.toString() || '0')
+    sessionStorage.setItem('type', 'anime')
+    router.push({ name: 'AcgMoreListPage' })
+  }
+}
 
-const {
-  visibleList,
-  isLoading,
-  noMore,
-  sentinel,
-  loadUntil
-} = useLazyLoad(allModules, {
-  batchSize: 2,
-  namespace: 'anime-category',
-  uniqueProps: {
-    tab: props.activeTab || '',
-    sub: props.activeSubCategory || ''
-  },
-  customScrollRoot: props.scrollContainerRef
-})
-
-// 恢复滚动
+// 滚动恢复
 onActivated(() => {
-  const scrollKey = `acg-scroll-${props.activeTab}-${props.activeSubCategory}`
+  const scrollKey = `acg-scroll-anime-${props.categoryTitle}`
   const savedScrollTop = sessionStorage.getItem(scrollKey)
-
   if (props.scrollContainerRef?.value && savedScrollTop) {
-    requestAnimationFrame(() => {
-      props.scrollContainerRef!.value!.scrollTop = parseInt(savedScrollTop, 10)
-    })
+    let tryCount = 0
+    let lastHeight = 0
+    function tryRestore() {
+      if (!props.scrollContainerRef?.value) return
+      const el = props.scrollContainerRef.value
+      if (el.scrollHeight !== lastHeight && el.scrollHeight > 0) {
+        el.scrollTop = parseInt(savedScrollTop, 10)
+        lastHeight = el.scrollHeight
+      }
+      tryCount++
+      if (tryCount < 20) setTimeout(tryRestore, 40)
+    }
+    tryRestore()
   }
 })
 </script>
@@ -155,7 +191,56 @@ onActivated(() => {
     transform: rotate(360deg);
   }
 }
-
+.left-title {
+  display: flex;
+  align-items: center;
+}
+.icon {
+  width: 5.33vw;
+  height: 5.33vw;
+  margin-right: 1.6vw;
+}
+.module-title {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin: 0 1.33vw 2.13vw;
+  font-size: 4.26vw;
+  font-weight: bold;
+  color: #333;
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.more-btn {
+  font-size: 3.2vw;
+  color: #ff6699;
+  padding: 0.8vw 1.33vw;
+  border: 0.53vw solid #ff6699;
+  border-radius: 1.33vw;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 1.06vw;
+  transition: 0.3s;
+  background: #fff;
+  font-weight: 600;
+  box-shadow: 0 0.53vw 1.06vw rgba(0,0,0,0.1);
+  margin-right: 2.66vw;
+  white-space: nowrap;
+  max-width: 19.2vw;
+  overflow: hidden;
+}
+.more-btn:hover {
+  background: #ff6699;
+  color: #fff;
+}
+.arrow-icon {
+  width: 2.66vw;
+  height: 2.66vw;
+}
 .loading-text {
   color: #ff5f5f;
   font-weight: 500;

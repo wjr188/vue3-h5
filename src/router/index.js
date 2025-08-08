@@ -34,6 +34,8 @@ const GroupJoinPage = () => import('../components/GroupJoinPage.vue')
 const InviteCodePage = () => import('../components/InviteCodePage.vue')
 const AllCategories = () => import('../components/AllCategories.vue')
 const VideoRankPage = () => import('../components/VideoRankPage.vue')
+const LimitedFreeList = () => import('../components/LimitedFreeList.vue') // ✅ 新增限免列表组件
+const CompletedList = () => import('../components/CompletedList.vue') // ✅ 新增完结列表组件
 const LimitedFreePage = () => import('../components/LimitedFreePage.vue')
 const DailyFollowPage = () => import('../components/DailyFollowPage.vue')
 const ComicRankPage = () => import('../components/ComicRankPage.vue')
@@ -124,6 +126,8 @@ const routes = [
 { path: '/invite-code', name: 'InviteCodePage', component: InviteCodePage },
 { path: '/all-categories', name: 'AllCategories', component: AllCategories },
 { path: '/video-rank', name: 'VideoRankPage', component: VideoRankPage },
+{ path: '/limited-free-list', name: 'LimitedFreeList', component: LimitedFreeList }, // ✅ 新增限免列表路由
+{ path: '/completed-list', name: 'CompletedList', component: CompletedList }, // ✅ 新增完结列表路由
 { path: '/limited-free', name: 'LimitedFreePage', component: LimitedFreePage },
 { path: '/daily-follow', name: 'DailyFollowPage', component: DailyFollowPage },
 { path: '/comic-rank', name: 'ComicRankPage', component: ComicRankPage },

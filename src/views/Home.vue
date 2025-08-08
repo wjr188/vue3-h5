@@ -289,6 +289,7 @@ function goToPlay(item: any) {
 
   router.push({
     path: `/play/${item.id}`,
+    query: { type: 'long' } // 或根据业务传 type
   })
 }
 

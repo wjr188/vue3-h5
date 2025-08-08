@@ -7,12 +7,16 @@ export function fetchLongVideoList(params: any) {
 }
 
 // 获取长视频详情（H5专用，不返回视频地址）
-export function fetchLongVideoDetail(id: number | string) {
-  return request.get(`/api/h5/long_videos/${id}`);
+export function fetchLongVideoDetail(id: number | string, type: string = 'long', userId?: string) {
+  
+  const params: any = { id, type };
+  if (userId) params.userId = userId;
+  return request.get(`/api/h5/video/detail`, { params });
 }
 
 // 播放视频
-export function playLongVideo(data: any) {
+export function playLongVideo(data: any & { type?: string; id?: number|string }) {
+  // data 里必须有 type 和 id
   return request.post("/api/long/videos/play", data);
 }
 
@@ -27,12 +31,14 @@ export function fetchH5AllLongVideos(params: any = {}) {
 }
 
 // H5专用：猜你喜欢推荐
-export function fetchH5GuessYouLike(params: { video_id: number | string; limit?: number }) {
+export function fetchH5GuessYouLike(params: { id: number | string; type?: string; limit?: number }) {
+  // params 里必须有 type 和 id
   return request.get('/api/h5/long_videos/guess_you_like', { params });
 }
 
 // 行为埋点接口
-export function trackLongVideoAction(data: { video_id: number; action: string }) {
+export function trackLongVideoAction(data: { id: number; type: string; action: string }) {
+  // data 里必须有 type 和 id
   return request.post('/api/h5/video/track', data);
 }
 

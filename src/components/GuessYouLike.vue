@@ -9,7 +9,7 @@
         @click="$emit('play', item)"
       >
         <div class="cover-wrapper">
-          <img :src="item.cover_url || item.cover" class="sub-image" />
+          <img v-lazy="item.cover_url || item.cover" class="sub-image" />
           <CardCornerIcon :isVip="item.vip" :coinAmount="item.coin" />
           <div class="meta">
             <span class="views">
@@ -45,12 +45,14 @@
 </template>
 
 <script setup lang="ts">
+// filepath: e:\mamama\vue3-h5\src\components\GuessYouLike.vue
 import { ref, watch, onMounted, onUnmounted, nextTick } from 'vue'
 import { fetchH5GuessYouLike } from '@/api/longVideo.api'
 import CardCornerIcon from './CardCornerIcon.vue'
 
 const props = defineProps<{
-  videoId: number | string
+  videoId: number | string,
+  type?: string
 }>()
 
 const list = ref<any[]>([])
@@ -79,7 +81,7 @@ function formatPlayCount(count: number): string {
 }
 
 async function loadGuess(reset = false) {
-  if (!props.videoId) return  // 没有 videoId 不请求
+  if (!props.videoId) return
   if (isLoading.value || noMore.value) return
   isLoading.value = true
   if (reset) {
@@ -87,7 +89,12 @@ async function loadGuess(reset = false) {
     list.value = []
     noMore.value = false
   }
-  const res = await fetchH5GuessYouLike({ video_id: props.videoId, limit: 8, page: page.value })
+  const res = await fetchH5GuessYouLike({
+    video_id: props.videoId,
+    type: props.type || 'long',
+    limit: 8,
+    page: page.value
+  })
   const newList = res?.list || []
   if (page.value === 1) {
     list.value = newList
@@ -123,15 +130,14 @@ onUnmounted(() => {
 })
 
 watch(
-  () => props.videoId,
-  (newId, oldId) => {
-    if (newId && newId !== oldId) {
+  () => [props.videoId, props.type],
+  ([newId, newType], [oldId, oldType]) => {
+    if (newId && (newId !== oldId || newType !== oldType)) {
       loadGuess(true)
       initObserver()
     }
   }
 )
-
 </script>
 
 <style scoped>
@@ -208,6 +214,7 @@ watch(
   line-height: 1.4;
   display: -webkit-box;
   -webkit-line-clamp: 2;
+  line-clamp: 2;
   -webkit-box-orient: vertical;
   overflow: hidden;
   text-overflow: ellipsis;

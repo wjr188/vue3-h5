@@ -150,11 +150,13 @@ import { useComicCategoryStore } from '@/store/comicCategoryStore'
 import { useHotKeywordStore } from '@/store/h5HotKeyword.store'
 import { useNovelCategoryStore } from '@/store/novelStore'
 import { useAudioNovelCategoryStore } from '@/store/audio-novel.store'
+import { useAnimeStore } from '@/store/anime.store'
 
 const hotKeywordStore = useHotKeywordStore()
 const comicStore = useComicCategoryStore()
 const novelStore = useNovelCategoryStore()
 const audioNovelStore = useAudioNovelCategoryStore()
+const animeStore = useAnimeStore()
 
 const tabTypeMap: Record<string, string> = {
   漫画: 'comic',
@@ -275,6 +277,14 @@ async function fetchSearchPage() {
         pageSize: 15,
         categoryId: selectedCategory.value.key || '',
       })
+       } else if (activeTab.value === '动漫') { // 新增动漫关键词搜索
+      res = await animeStore.loadAnimeVideoList({
+        keyword: keyword.value.trim(),
+        page: searchPage.value,
+        pageSize: 15,
+        categoryId: selectedCategory.value.key || undefined,
+        tagId: selectedTag.value || undefined,
+      })
     } else {
       // 漫画和动漫都走这里
       res = await comicStore.loadAllComics(params)
@@ -363,6 +373,12 @@ const loadCategories = async () => {
       { key: 0, label: '全部分类' },
       ...audioNovelStore.mainCategories.map(c => ({ key: c.id, label: c.name }))
     ]
+  }else if (activeTab.value === '动漫') {        // 动漫分支
+    await animeStore.loadMainCategories()
+    categoryList.value = [
+      { key: 0, label: '全部分类' },
+      ...animeStore.mainCategories.map(c => ({ key: c.id, label: c.name }))
+    ]
   }
   categoryLoaded = true
 }
@@ -378,6 +394,9 @@ const loadTags = async () => {
   } else if (activeTab.value === '有声') {
     await audioNovelStore.loadTagList()
     tagList.value = [{ id: 0, name: '全部标签' }, ...audioNovelStore.tagList.map(tag => ({ id: tag.id, name: tag.name }))]
+  }else if (activeTab.value === '动漫') {        // 动漫分支
+    await animeStore.loadAnimeTags()
+    tagList.value = [{ id: 0, name: '全部标签' }, ...animeStore.animeTags.map(tag => ({ id: tag.id, name: tag.name }))]
   }
   tagsLoaded = true
 }
@@ -430,6 +449,15 @@ async function fetchFirstPage(force = false) {
       pageSize: 15,
       force
     })
+  }else if (activeTab.value === '动漫') {    // 动漫分支
+    res = await animeStore.loadAnimeVideoList({
+       parentId: selectedCategory.value.key || undefined,
+      tagId: selectedTag.value || undefined,
+      sort: sortMap[selectedSort.value] || 'default',
+      page: 1,
+      pageSize: 15,
+      force
+    })
   }
   const newList = (res?.list || []).map(item => ({
     ...item,
@@ -470,6 +498,14 @@ async function fetchNextPage() {
     res = await audioNovelStore.loadLibraryAudioNovelsWithCache({
       categoryId: selectedCategory.value.key,
       tagId: selectedTag.value,
+      sort: sortMap[selectedSort.value] || 'default',
+      page: page.value,
+      pageSize: 15
+    })
+  }else if (activeTab.value === '动漫') {    // 动漫分支
+    res = await animeStore.loadAnimeVideoList({
+      categoryId: selectedCategory.value.key || undefined,
+      tagId: selectedTag.value || undefined,
       sort: sortMap[selectedSort.value] || 'default',
       page: page.value,
       pageSize: 15
@@ -544,8 +580,13 @@ function goToDetail(item) {
     })
   } else if (activeTab.value === '有声') {
     router.push({ name: 'AudioPlayer', params: { id: item.id }, query: { title: item.title } })
+  }else if (activeTab.value === '动漫') {
+    router.push({
+      name: 'PlayPage',  // 按你的路由名字来改
+      params: { id: item.id },
+      query: { title: item.title, type: 'anime' }
+    })
   }
-  // 你如果还有动漫/有声，按需补充 else if
 }
 
 function goBack() {
@@ -697,7 +738,7 @@ async function switchTab(tab: 'search' | 'library') {
   z-index: 20;
 }
 
-/* 内容滚动区，独立滚动 */
+/* 🔥 修改：内容滚动区，隐藏滚动条 */
 .scroll-content {
   flex: 1;
   overflow-y: auto;
@@ -706,9 +747,35 @@ async function switchTab(tab: 'search' | 'library') {
   flex-direction: column;
   /* 可选底部留白 */
   padding-bottom: 8vw;
+  
+  /* 🔥 新增：隐藏滚动条的样式 */
+  scrollbar-width: none; /* Firefox */
+  -ms-overflow-style: none; /* IE 和 Edge */
 }
 
-/* 以下全部是你原有的css，无删减！ */
+/* 🔥 新增：隐藏 WebKit 浏览器（Chrome、Safari）的滚动条 */
+.scroll-content::-webkit-scrollbar {
+  display: none !important;
+  width: 0 !important;
+  height: 0 !important;
+}
+
+/* 🔥 确保筛选标签的横向滚动条也隐藏 */
+.filter-tags {
+  overflow-x: auto;
+  white-space: nowrap;
+  padding-bottom: 0.53vw;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: none; /* Firefox */
+  -ms-overflow-style: none; /* IE 和 Edge */
+}
+.filter-tags::-webkit-scrollbar {
+  display: none !important;
+  width: 0 !important;
+  height: 0 !important;
+}
+
+/* 以下保持原有样式不变... */
 .top-bar {
   display: flex;
   align-items: center;
@@ -889,16 +956,6 @@ async function switchTab(tab: 'search' | 'library') {
   color: #333;
   font-size: 4vw;
   flex-shrink: 0;
-}
-.filter-tags {
-  overflow-x: auto;
-  white-space: nowrap;
-  padding-bottom: 0.53vw;
-  -webkit-overflow-scrolling: touch;
-  scrollbar-width: none;
-}
-.filter-tags::-webkit-scrollbar {
-  display: none;
 }
 .filter-tag {
   display: inline-block;

@@ -38,9 +38,9 @@ interface Entry {
 
 const entries: Entry[] = [
   { icon: '/icons/paihangbang1.png', label: '排行榜', route: '/comic-rank' },
-  { icon: '/icons/xianmian1.png', label: '限免', route: '/acg-author' },
+    { icon: '/icons/xianmian1.png', label: '限免', route: '/limited-free-list' }, // ✅ 修改为限免列表路由
   { icon: '/icons/meiri.png', label: '每日', route: '/daily-follow' },
-  { icon: '/icons/wanjie.png', label: '完结', route: '/acg-signin' },
+  { icon: '/icons/wanjie.png', label: '完结', route: '/completed-list' },
   { icon: '/icons/qiandao2.png', label: '签到', route: '/benefit-page' },
   { icon: '/icons/vip1.png', label: '会员', route: '/vip?tab=vip' },
   { icon: '/icons/jinbi1.png', label: '金币', route: '/vip?tab=coin' }

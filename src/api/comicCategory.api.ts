@@ -186,7 +186,16 @@ export function fetchUnGroupedComics(): Promise<{ list: any[] }> {
 /**
  * 获取全部漫画（用于推荐池右侧搜索、筛选）
  */
-export function fetchAllComics(params?: any): Promise<{ list: any[]; total: number }> {
+export function fetchAllComics(params?: {
+  keyword?: string;
+  category_id?: number;
+  page?: number;
+  pageSize?: number;
+  status?: number;
+  is_vip?: number; // ✅ 新增：VIP筛选 (0: 非VIP, 1: VIP)
+  coin?: number; // ✅ 新增：金币筛选 (0: 免费, >0: 付费)
+  is_serializing?: number; // ✅ 新增：连载状态 (0: 已完结, 1: 连载中)
+}): Promise<{ list: any[]; total: number }> {
   return request.get('/api/comic/manga/list', { params });
 }
 
@@ -235,4 +244,48 @@ export function fetchComicTagList(params?: {
   page_size?: number;
 }): Promise<{ list: any[]; total: number }> {
   return request.get('/api/comic/tag/list', { params });
+}
+/**
+ * 获取漫画榜单（支持人气/点赞/收藏+日周月年，分页）
+ * @param params { action: 'view'|'like'|'collect', range: 'day'|'week'|'month'|'year', page, pageSize }
+ * @returns { list: any[], total: number }
+ */
+export function fetchComicRankList(params: {
+  action: 'view' | 'like' | 'collect', // 榜单类型
+  range: 'day' | 'week' | 'month' | 'year', // 时间范围
+  page?: number
+  pageSize?: number
+}): Promise<{ list: any[], total: number }> {
+  return request.get('/api/comic/manga/rankList', { params });
+}
+
+/**
+ * 获取每日更新的漫画（简化版）
+ */
+export function fetchDailyUpdates(params: {
+  page?: number;
+  page_size?: number;
+}) {
+  return request.get('/api/comic/manga/daily-updates', { params });
+}
+
+/**
+ * 获取周更新漫画（简化版）
+ */
+export function fetchWeeklyUpdates(params: {
+  update_day: number; // 1-5 对应周一到周五
+  page?: number;
+  page_size?: number;
+}) {
+  return request.get('/api/comic/manga/weekly-updates', { params });
+}
+
+/**
+ * 获取本周所有更新的漫画（新增）
+ */
+export function fetchWeeklyAllUpdates(params: {
+  page?: number;
+  page_size?: number;
+}) {
+  return request.get('/api/comic/manga/weekly-all-updates', { params });
 }

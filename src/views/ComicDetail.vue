@@ -38,10 +38,10 @@
         </div>
       </div>
       <div class="stats-center">
-        <div class="stat-item">
-          <img src="/icons/like2.svg" class="stat-icon" />
-          <span>{{ formatW(isNovel ? novel.likes : comic.likes) }}</span>
-        </div>
+        <div class="stat-item" @click="handleLikeClick">
+  <img src="/icons/like2.svg" class="stat-icon" />
+  <span>{{ formatW(isNovel ? novel.likes : comic.likes) }}</span>
+</div>
       </div>
       <div class="collect-badge">
         <div class="badge-content">
@@ -148,10 +148,10 @@
 
     <!-- 底部按钮 -->
     <div class="bottom-bar">
-      <button class="bottom-left-btn">
-        <img src="/icons/star2.svg" class="bottom-icon-large" />
-        <div class="bottom-icon-text">收藏</div>
-      </button>
+  <button class="bottom-left-btn" @click="handleBottomCollectClick">
+    <img src="/icons/star2.svg" class="bottom-icon-large" />
+    <div class="bottom-icon-text">收藏</div>
+  </button>
      <!-- 只动这一行 -->
 <button class="bottom-read-btn-big"
   @click="isNovel ? (firstNovelChapter && checkPermissionAndRead(firstNovelChapter)) : (comic.chapters?.[0] && checkPermissionAndRead(comic.chapters[0]))">
@@ -275,6 +275,8 @@ import { useComicCategoryStore } from '@/store/comicCategoryStore'
 import { useNovelCategoryStore } from '@/store/novelStore'
 import { useUserStore } from '@/store/user'
 import { showToast } from 'vant'
+import { trackLongVideoAction } from '@/api/longVideo.api'
+
 
 // 类型判定
 const props = withDefaults(defineProps<{
@@ -588,6 +590,25 @@ function readChapter(chapterId) {
 
   const routeName = isNovel.value ? 'NovelReader' : 'ComicReader';
 
+   // 埋点前强力打印排查
+  if (isComic.value) {
+    console.log('===埋点参数===');
+    console.log('comic.value', comic.value);
+    console.log('comic.value.id', comic.value.id, typeof comic.value.id);
+    const _id = Number(comic.value.id);
+    console.log('trackLongVideoAction 参数:', { id: _id, type: 'comic', action: 'read' });
+
+    // 只有 id 有值且是数字再埋点
+    if (_id && !isNaN(_id)) {
+      trackLongVideoAction({
+        id: _id,
+        type: 'comic',
+        action: 'view'
+      });
+    } else {
+      console.error('comic.id 无效，不埋点');
+    }
+  }
   // ✅ 始终使用 push，行为与漫画保持一致
   router.push({ name: routeName, params: { comicId: props.id, chapterId } });
 }
@@ -617,43 +638,45 @@ function handleGuessCardClick(item: any) {
 
 // 返回逻辑
 function goBack() {
-  const returnFrom = sessionStorage.getItem('acg-return-from')
-  const scrollTop = sessionStorage.getItem('acg-scroll-top')
-
-  // ✅ 优先检查是否从 AcgMoreListPage 跳转过来
-  if (returnFrom && returnFrom.includes('AcgMoreListPage')) {
-    router.replace({ name: 'AcgMoreListPage' }).then(() => {
-      nextTick(() => {
-        requestAnimationFrame(() => {
-          window.scrollTo(0, parseInt(scrollTop || '0', 10))
-        })
-      })
+  // ✅ 1. 检查是否从榜单页进入（优先级最高，因为有完整的返回信息）
+  const rankFrom = sessionStorage.getItem('acg-rank-return-from')
+  const rankTab = sessionStorage.getItem('acg-rank-tab')
+  const rankSub = sessionStorage.getItem('acg-rank-sub')
+  const rankScroll = sessionStorage.getItem('acg-rank-scroll')
+  
+  if (rankFrom && rankTab && rankSub) {
+    // 使用 replace 避免历史栈积累
+    router.replace(rankFrom).then(() => {
+      // 榜单页会自动恢复 tab、subTab 和滚动位置
     })
-    sessionStorage.removeItem('acg-return-from')
-    sessionStorage.removeItem('acg-scroll-top')
     return
   }
 
-  // 其他 acg-return-from（如推荐页），也走同样逻辑
-  if (returnFrom) {
-    try {
-      const returnToRoute = JSON.parse(returnFrom)
-      router.replace(returnToRoute).then(() => {
-        nextTick(() => {
-          requestAnimationFrame(() => {
-            window.scrollTo(0, parseInt(scrollTop || '0', 10))
-          })
-        })
-      })
-      sessionStorage.removeItem('acg-return-from')
-      sessionStorage.removeItem('acg-scroll-top')
-      return
-    } catch (e) {
-      console.error('解析返回路由失败', e)
-    }
+  // ✅ 2. 检查是否从限免列表进入
+  const limitedFreeFrom = sessionStorage.getItem('limited-free-return-from')
+  const limitedFreeScroll = sessionStorage.getItem('limited-free-scroll-top')
+  
+  if (limitedFreeFrom && limitedFreeScroll) {
+    // 使用 replace 返回限免列表，避免历史栈积累
+    router.replace({ name: 'LimitedFreeList' }).then(() => {
+      // 限免列表会自动恢复滚动位置和状态
+    })
+    return
   }
 
-  // 搜索页返回（你原来的逻辑）
+  // ✅ 3. 检查是否从完结列表进入
+  const completedFrom = sessionStorage.getItem('completed-return-from')
+  const completedScroll = sessionStorage.getItem('completed-scroll-top')
+  
+  if (completedFrom && completedScroll) {
+    // 使用 replace 返回完结列表，避免历史栈积累
+    router.replace({ name: 'CompletedList' }).then(() => {
+      // 完结列表会自动恢复滚动位置和状态
+    })
+    return
+  }
+
+  // ✅ 4. 检查是否从搜索页返回（保持原有逻辑）
   if (sessionStorage.getItem('search-main-is-return')) {
     const activeTab = sessionStorage.getItem('search-main-return-tab')
     const currentTab = sessionStorage.getItem('search-main-return-type')
@@ -670,8 +693,64 @@ function goBack() {
     return
   }
 
+  // ✅ 5. 推荐页/更多页（保持原有逻辑）
+  const returnFrom = sessionStorage.getItem('acg-return-from')
+  const scrollTop = sessionStorage.getItem('acg-scroll-top')
+  
+  if (returnFrom && returnFrom.includes('AcgMoreListPage')) {
+    router.replace({ name: 'AcgMoreListPage' }).then(() => {
+      nextTick(() => {
+        window.scrollTo(0, parseInt(scrollTop || '0', 10))
+      })
+    })
+    sessionStorage.removeItem('acg-return-from')
+    sessionStorage.removeItem('acg-scroll-top')
+    return
+  }
+  
+  if (returnFrom) {
+    try {
+      const returnToRoute = JSON.parse(returnFrom)
+      router.replace(returnToRoute).then(() => {
+        nextTick(() => {
+          window.scrollTo(0, parseInt(scrollTop || '0', 10))
+        })
+      })
+      sessionStorage.removeItem('acg-return-from')
+      sessionStorage.removeItem('acg-scroll-top')
+      return
+    } catch (e) {
+      console.error('解析返回路由失败', e)
+    }
+  }
+
+  // ✅ 6. 检查是否从每日追番页面进入（放到最后，避免误判）
+  const dailyFollowFrom = sessionStorage.getItem('daily-follow-return-from')
+  const dailyFollowState = sessionStorage.getItem('daily-follow-state')
+  
+  // 🔥 关键修复：更严格的判断条件
+  if (dailyFollowFrom === 'DailyFollowPage' && dailyFollowState) {
+    try {
+      // 验证 dailyFollowState 是否为有效的 JSON
+      const state = JSON.parse(dailyFollowState)
+      if (state && typeof state.activeTab === 'number') {
+        // 使用 replace 返回每日追番页面，避免历史栈积累
+        router.replace({ name: 'DailyFollowPage' }).then(() => {
+          // DailyFollowPage 会自动恢复滚动位置和状态
+        })
+        return
+      }
+    } catch (e) {
+      // 如果解析失败，清理无效状态
+      sessionStorage.removeItem('daily-follow-return-from')
+      sessionStorage.removeItem('daily-follow-state')
+    }
+  }
+
+  // ✅ 7. 默认返回（保持原有逻辑）
   router.back()
 }
+
 // 其它按钮
 function formatW(num: number) {
   if (!num || isNaN(num)) return '0.0w'
@@ -722,6 +801,30 @@ async function unlockAllChapters() {
   purchaseSheetType.value = 'whole'
   purchaseSheet.value = true
 }
+function handleBottomCollectClick() {
+  if (isComic.value) {
+    trackLongVideoAction({
+      id: comic.value.id,
+      type: 'comic',
+      action: 'collect'
+    });
+    showToast('收藏成功');
+  }
+  // 你可以加自己的收藏业务逻辑，比如切换收藏状态
+}
+
+function handleLikeClick() {
+  if (isComic.value) {
+    trackLongVideoAction({
+      id: comic.value.id,
+      type: 'comic',
+      action: 'like'
+    });
+    showToast('点赞成功');
+  }
+  // 如果还有别的业务，可以继续加
+}
+
 </script>
 
 
@@ -805,28 +908,6 @@ async function unlockAllChapters() {
 .category {
   background: #ff6699;
   border-radius: 1.06vw; /* 4px / 375px * 100 = 1.06vw */
-  padding: 1.06vw 3.46vw; /* 4px / 375px * 100 = 1.06vw, 13px / 375px * 100 = 3.46vw */
-  color: #fff;
-  font-size: 3.46vw; /* 13px / 375px * 100 = 3.46vw */
-  margin-left: 0.53vw; /* 2px / 375px * 100 = 0.53vw */
-}
-.intro {
-  font-size: 3.73vw; /* 14px / 375px * 100 = 3.73vw */
-  margin: 2.13vw 0; /* 8px / 375px * 100 = 2.13vw */
-  line-height: 1.5;
-  display: -webkit-box;
-  -webkit-line-clamp: 3;
-  line-clamp: 3;
-  overflow: hidden;
-  -webkit-box-orient: vertical;
-}
-.tags {
-  display: flex;
-  flex-wrap: wrap;
-  margin-bottom: 2.13vw; /* 8px / 375px * 100 = 2.13vw */
-}
-.tag {
-  background: rgba(255, 102, 153, 0.9);
   color: #fff;
   padding: 1.06vw 2.66vw; /* 4px / 375px * 100 = 1.06vw, 10px / 375px * 100 = 2.66vw */
   border-radius: 1.06vw; /* 4px / 375px * 100 = 1.06vw */

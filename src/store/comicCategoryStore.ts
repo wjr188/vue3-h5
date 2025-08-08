@@ -27,6 +27,11 @@ import {
   fetchChildRecommendCategories,
   fetchSubCategoryComics,
   fetchComicTagList,
+  fetchComicRankList,
+  fetchDailyUpdates,
+  fetchWeeklyUpdates,
+  fetchWeeklyAllUpdates, // 新增
+  // recordComicUpdate // 删除这个导入
 } from '@/api/comicCategory.api'
 
 export interface ComicItem {
@@ -332,7 +337,7 @@ clearSubCategories(parentId: number) {
   async loadUnlockedChapters(comicId) {
   const cid = String(comicId)
   try {
-    const res = await getUnlockedComicChapters({ comic_id: cid })
+    const res = await getUnlockedComicChapters({ comic_id: Number(comicId) })
     // res.unlocked，res.can_view_vip_video...
     if (res && Array.isArray(res.unlocked)) {
       this.unlockedChaptersMap[cid] = res.unlocked.map(String)
@@ -539,6 +544,96 @@ clearCategoryCache(subCategoryId: number) {
     async batchSetStatus(ids: number[], status: number) {
       return batchSetComicCategoryStatus({ ids, status })
     },
+/**
+ * 加载漫画榜单数据（支持人气/点赞/收藏+日/周/月/年，带分页，自动缓存）
+ */
+async loadComicRankList({
+  action = 'view',
+  range = 'day',
+  page = 1,
+  pageSize = 15,
+  append = false,
+}: {
+  action?: 'view' | 'like' | 'collect',
+  range?: 'day' | 'week' | 'month' | 'year',
+  page?: number,
+  pageSize?: number,
+  append?: boolean
+} = {}) {
+  const cacheKey = `${action}_${range}`;
+  if (!this.comicLibraryCache[cacheKey]) {
+    this.comicLibraryCache[cacheKey] = {
+      list: [],
+      total: 0,
+      page: 0,
+      pageSize,
+      loading: false,
+      noMore: false,
+    }
+  }
+  const state = this.comicLibraryCache[cacheKey];
+  if (state.loading) return state;
+  state.loading = true;
+  try {
+    // 这里action/range类型已被收紧，不会有TS警告
+    const res = await fetchComicRankList({ action, range, page, pageSize });
+    
+    if (append) {
+      // 🔥 关键修复：使用Map去重，避免重复数据
+      const existingIds = new Set(state.list.map((item: any) => item.id));
+      const newUniqueItems = (res.list || []).filter((item: any) => !existingIds.has(item.id));
+      
+      
+      if (newUniqueItems.length > 0) {
+        state.list = state.list.concat(newUniqueItems);
+      } else {
+        // 如果没有新的唯一数据，标记为没有更多
+        state.noMore = true;
+      }
+    } else {
+      // 首次加载，直接使用API返回的数据
+      state.list = res.list || [];
+    }
+    
+    state.total = res.total || 0;
+    state.page = page;
+    state.pageSize = pageSize;
+    
+    // 🔥 关键修复：更准确的noMore判断
+    // 1. 如果当前已加载的数据量 >= 总数量，则没有更多
+    // 2. 如果API返回的数据少于请求的pageSize，说明已到末尾
+    // 3. 如果是append模式但没有获得新的唯一数据，也标记为结束
+    const reachedTotal = state.list.length >= state.total;
+    const apiReturnedLess = (res.list?.length || 0) < pageSize;
+    const noNewData = append && (res.list?.length || 0) === 0;
+    
+    state.noMore = reachedTotal || apiReturnedLess || noNewData;
+    
+    return state;
+  } finally {
+    state.loading = false;
+  }
+},
+
+/**
+ * 榜单分页加载更多
+ */
+async loadMoreComicRankList(
+  action: 'view' | 'like' | 'collect',
+  range: 'day' | 'week' | 'month' | 'year'
+) {
+  const cacheKey = `${action}_${range}`;
+  const state = this.comicLibraryCache[cacheKey];
+  if (!state || state.loading || state.noMore) return state;
+  const nextPage = state.page + 1;
+  return this.loadComicRankList({
+    action,
+    range,
+    page: nextPage,
+    pageSize: state.pageSize,
+    append: true
+  });
+},
 
     // --- 推荐分组相关 ---
     async loadRecommendGroups(params = {}) {
@@ -735,8 +830,146 @@ clearRecommendGroupCache(groupId: number) {
       finished: false,
     }
   }
-}
+},
 
+/**
+ * 获取限免漫画列表
+ */
+async loadLimitedFreeComics(params?: {
+  page?: number;
+  pageSize?: number;
+  category_id?: number;
+}) {
+  try {
+    const response = await fetchAllComics({
+      is_vip: 0,      // ✅ 确保传递 is_vip: 0
+      coin: 0,        // ✅ 确保传递 coin: 0
+      page: params?.page || 1,
+      pageSize: params?.pageSize || 20,
+      category_id: params?.category_id,
+      status: 1 // 只获取上架的
+    })
+    return response
+  } catch (error) {
+    console.error('获取限免漫画失败:', error)
+    throw error
+  }
+},
+
+/**
+ * 获取完结漫画列表
+ */
+async loadCompletedComics(params?: {
+  page?: number;
+  pageSize?: number;
+  category_id?: number;
+}) {
+  try {
+    const response = await fetchAllComics({
+      is_serializing: 0,
+      page: params?.page || 1,
+      pageSize: params?.pageSize || 20,
+      category_id: params?.category_id,
+      status: 1 // 只获取上架的
+    })
+    return response
+  } catch (error) {
+    console.error('获取完结漫画失败:', error)
+    throw error
+  }
+},
+    /**
+     * 获取每日更新的漫画（简化版）
+     */
+    async loadDailyUpdates({
+      page = 1,
+      pageSize = 15
+    }: {
+      page?: number
+      pageSize?: number
+    }) {
+      try {
+        const response = await fetchDailyUpdates({
+          page,
+          page_size: pageSize
+        })
+        
+        if (response && response.list) {
+          return {
+            list: response.list || [],
+            total: response.total || 0
+          }
+        } else {
+          return { list: [], total: 0 }
+        }
+      } catch (error) {
+        console.error('获取最新更新失败:', error)
+        return { list: [], total: 0 }
+      }
+    },
+
+    /**
+     * 获取周更新漫画（简化版）
+     */
+    async loadWeeklyUpdates({
+      updateDay,
+      page = 1,
+      pageSize = 15
+    }: {
+      updateDay: number
+      page?: number
+      pageSize?: number
+    }) {
+      try {
+        const response = await fetchWeeklyUpdates({
+          update_day: updateDay,
+          page,
+          page_size: pageSize
+        })
+        
+        if (response && response.list) {
+          return {
+            list: response.list || [],
+            total: response.total || 0
+          }
+        } else {
+          return { list: [], total: 0 }
+        }
+      } catch (error) {
+        console.error('获取周更新失败:', error)
+        return { list: [], total: 0 }
+      }
+    },
+
+    /**
+     * 获取本周所有更新的漫画（新增方法）
+     */
+    async loadWeeklyAllUpdates({
+      page = 1,
+      pageSize = 15
+    }: {
+      page?: number
+      pageSize?: number
+    }) {
+      try {
+        const response = await fetchWeeklyAllUpdates({
+          page,
+          page_size: pageSize
+        })
+        
+        if (response && response.list) {
+          return {
+            list: response.list || [],
+            total: response.total || 0
+          }
+        } else {
+          return { list: [], total: 0 }
+        }
+      } catch (error) {
+        console.error('获取本周更新失败:', error)
+        return { list: [], total: 0 }
+      }
+    }
   }
   
 })

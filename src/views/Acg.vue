@@ -81,9 +81,11 @@ import AcgAnimeRecommend from './AcgAnimeRecommend.vue'
 import { useComicCategoryStore } from '@/store/comicCategoryStore'
 import { useNovelCategoryStore } from '@/store/novelStore'
 import { useAudioNovelCategoryStore } from '@/store/audio-novel.store'
-import { animeSubCategories } from '@/constants/animeSubCategories.js'
+import { useAnimeStore } from '@/store/anime.store'
 import { audioSubCategories } from '@/constants/audioSubCategories.js'
 import { comicSubCategories } from '@/constants/comicSubCategories.js'
+import { animeSubCategories } from '@/constants/animeSubCategories.js'
+
 
 const comicModules = import.meta.glob('/src/mock/acg/comic/*.js', { eager: true })
 const animeModules = import.meta.glob('/src/mock/acg/anime/*.js', { eager: true })
@@ -113,6 +115,8 @@ const tabIndexMap = ref<Record<TopCategory, number>>({
 const categoryStore = useComicCategoryStore()
 const novelCategoryStore = useNovelCategoryStore()
 const audioNovelCategoryStore = useAudioNovelCategoryStore()
+const animeStore = useAnimeStore()
+
 
 // ⭐ 监听tab切换到“小说”才拉小说分类，只拉一次
 watch(
@@ -142,12 +146,27 @@ watch(
   },
   { immediate: false }
 )
+watch(
+  activeTab,
+  async (val) => {
+    if (
+      val === '动漫' &&
+      animeStore.mainCategories
+.length === 0 &&
+      !animeStore.loading
+    ) {
+      await animeStore.loadMainCategories()
+    }
+  },
+  { immediate: false }
+)
+
 const subCategories = computed<string[]>(() => {
   if (activeTab.value === '漫画') {
     return ['推荐', ...categoryStore.mainCategories.map(c => c.name)]
   }
   if (activeTab.value === '动漫') {
-    return ['推荐', ...animeSubCategories.map(i => (typeof i === 'string' ? i : i.label))]
+    return ['推荐', ...animeStore.mainCategories.map(i => i.name)]
   }
   if (activeTab.value === '小说') {
     return ['推荐', ...novelCategoryStore.mainCategories.map(i => i.name)]
@@ -249,7 +268,7 @@ function onSlideChange(swiper: SwiperInstance) {
   if (activeTab.value === '漫画' && name !== '推荐') {
     const mainCategory = categoryStore.mainCategories.find(c => c.name === name)
     if (mainCategory && !categoryStore.getSubCategories(mainCategory.id).length) {
-      categoryStore.loadSubCategoriesWithComics(mainCategory.id, 9)
+      categoryStore.loadSubCategoriesWithComics(mainCategory.id, { limit: 9 })
     }
   }
 
@@ -260,18 +279,28 @@ function onSlideChange(swiper: SwiperInstance) {
       novelCategoryStore.loadNovelsByCategory(name, mainCategory.id, 1, 15)
     }
   }
-  // 有声逻辑（只加这一段！）
-  if (activeTab.value === '有声' && name !== '推荐') {
-  const mainCategory = audioNovelCategoryStore.mainCategories.find(c => c.name === name)
-  if (mainCategory && !audioNovelCategoryStore.categoryAudioMap[mainCategory.id]) {
-    audioNovelCategoryStore.loadAudioNovelList({
-      categoryId: mainCategory.id,
-      page: 1,
-      pageSize: 15
-    }, false, mainCategory.id)
+
+  // 动漫逻辑（你新加的）
+  if (activeTab.value === '动漫' && name !== '推荐') {
+  const mainCategory = animeStore.mainCategories.find(c => c.name === name)
+  if (mainCategory && !animeStore.groupMap[name]) {
+    animeStore.loadGroup(mainCategory.id, 1, 2, 6) // page, pageSize, limit
   }
 }
+
+  // 有声逻辑
+  if (activeTab.value === '有声' && name !== '推荐') {
+    const mainCategory = audioNovelCategoryStore.mainCategories.find(c => c.name === name)
+    if (mainCategory && !audioNovelCategoryStore.categoryAudioMap[mainCategory.id]) {
+      audioNovelCategoryStore.loadAudioNovelList({
+        categoryId: mainCategory.id,
+        page: 1,
+        pageSize: 15
+      }, false, mainCategory.id)
+    }
+  }
 }
+
 const dataMap = computed<Record<string, any[]>>(() => {
   const map: Record<string, any[]> = {}
   if (activeTab.value === '漫画') {
@@ -311,6 +340,13 @@ function getComponent(name: string) {
 function getComponentProps(name: string, idx?: number) {
   const data = dataMap.value[name]
   let parentCategoryId: number | undefined = undefined
+  let animes: any[] | undefined = undefined
+  if (activeTab.value === '动漫' && name !== '推荐') {
+    const mainCategory = animeStore.mainCategories
+.find(c => c.name === name)
+    parentCategoryId = mainCategory?.id
+    animes = animeStore.groupMap[name]?.subCategories ?? []
+  }
   if (activeTab.value === '漫画' && name !== '推荐') {
     const mainCategory = categoryStore.mainCategories.find(c => c.name === name)
     parentCategoryId = mainCategory?.id

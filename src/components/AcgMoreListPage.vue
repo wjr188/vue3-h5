@@ -23,19 +23,33 @@
       </div>
       <div v-if="!noMore" ref="sentinel" class="load-more-trigger"></div>
     </div>
+
+    <!-- 🔥 修复：添加组件挂载状态检查，和 LimitedFreeList 保持一致 -->
+    <BackToTop 
+      v-if="isComponentMounted"
+      :scroll-container="scrollContent"
+      :threshold="200"
+      :duration="500"
+    />
   </div>
 </template>
+
 <script setup lang="ts">
 import { ref, onMounted, nextTick, onUnmounted, onActivated, computed } from 'vue'
 import { useRouter } from 'vue-router'
 import AcgCard from '@/components/AcgCard.vue'
+// 🔥 新增：导入 BackToTop 组件
+import BackToTop from '@/components/BackToTop.vue'
 import { useComicCategoryStore } from '@/store/comicCategoryStore'
 import { useNovelCategoryStore } from '@/store/novelStore'
 import { useAudioNovelCategoryStore } from '@/store/audio-novel.store'
+import { useAnimeStore } from '@/store/anime.store'
+
 
 const comicStore = useComicCategoryStore()
 const novelStore = useNovelCategoryStore()
 const audioStore = useAudioNovelCategoryStore()
+const animeStore = useAnimeStore()
 const router = useRouter()
 
 const pageTitle = ref(sessionStorage.getItem('acg-return-sub') || '推荐')
@@ -50,6 +64,8 @@ const type = sessionStorage.getItem('type') // 推荐你 setItem('type', 'audio'
 const isComic = computed(() => !type || type === 'comic')
 const isNovel = computed(() => type === 'novel')
 const isAudio = computed(() => type === 'audio')
+const isAnime = computed(() => type === 'anime')
+
 
 const items = ref<any[]>([])
 const isLoading = ref(false)
@@ -58,6 +74,9 @@ const page = ref(1)
 const total = ref(0)
 const sentinel = ref<HTMLDivElement | null>(null)
 const scrollContent = ref<HTMLElement | null>(null)
+
+// 🔥 新增：添加组件挂载状态标识，和 LimitedFreeList 保持一致
+const isComponentMounted = ref(false)
 
 async function loadMore() {
   if (isLoading.value || noMore.value) return
@@ -75,6 +94,11 @@ async function loadMore() {
     } else if (isNovel.value) {
       // 小说推荐分组
       res = await novelStore.loadRecommendGroupNovels(
+        groupId.value, { page: page.value, pageSize: 15 }
+      )
+      } else if (isAnime.value) {
+      // ==================== 新增动漫推荐分组 ====================
+      res = await animeStore.loadRecommendGroupAnimes(
         groupId.value, { page: page.value, pageSize: 15 }
       )
     } else {
@@ -102,6 +126,11 @@ async function loadMore() {
       res = await novelStore.loadCategoryNovels(
         subCategoryId.value, { page: page.value, pageSize: 15 }
       )
+      } else if (isAnime.value) {
+  // ========== 新增动漫分页 ==========
+  res = await animeStore.loadSubCategoryAnimes(
+    subCategoryId.value, page.value, 15
+  )
     } else {
       // 漫画分页
       res = await comicStore.loadSubCategoryComics(
@@ -153,8 +182,11 @@ function goToDetail(item: any) {
       ? 'AudioPlayer'
       : isNovel.value
         ? 'NovelDetail'
+        : isAnime.value
+          ? 'PlayPage'
         : 'ComicDetail',
-    params: { id }
+    params: { id },
+    query: isAnime.value ? { type: 'anime' } : {}
   })
 }
 
@@ -189,6 +221,15 @@ function initObserver() {
 
 onMounted(async () => {
   pageTitle.value = sessionStorage.getItem('moduleTitle') || '默认标题'
+  
+  // 🔥 新增：等待 DOM 渲染完成
+  await nextTick()
+  
+  // 🔥 新增：设置组件挂载完成标识
+  if (scrollContent.value) {
+    isComponentMounted.value = true
+  }
+  
   await loadMore()
   await restoreScrollPosition()
   initObserver()

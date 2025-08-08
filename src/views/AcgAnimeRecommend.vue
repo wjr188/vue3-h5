@@ -1,7 +1,6 @@
 <template>
   <div class="acg-anime-recommend-wrapper">
     <div class="content-container">
-      <!-- 模块列表 -->
       <div
         v-for="(module, index) in visibleList"
         :key="module.id || index"
@@ -9,9 +8,19 @@
       >
         <div class="module-title">
           <div class="left-title">
-            <img v-if="getModuleIcon(module.id)" :src="getModuleIcon(module.id)" class="icon" alt="" />
+            <img
+              v-if="module.icon"
+              :src="`/icons/${module.icon}`"
+              class="icon"
+              alt=""
+            />
             {{ module.moduleTitle }}
-            <img v-if="index === 0" src="/icons/recommend.svg" class="recommend-icon" alt="推荐标志" />
+            <img
+              v-if="index === 0"
+              src="/icons/recommend.svg"
+              class="recommend-icon"
+              alt="推荐"
+            />
           </div>
           <div class="more-btn" @click="goMore(module)">
             <span>更多</span>
@@ -21,7 +30,6 @@
         <AcgSection
           :layoutType="module.layoutType"
           :data="module.items"
-          :activeTab="'动漫'"
           @item-click="goToDetail"
         />
       </div>
@@ -34,158 +42,162 @@
         <div class="loading-text">客官别走，妾身马上就好~</div>
       </div>
       <div v-if="noMore && visibleList.length > 0" class="no-more-text">
-        客官，妾身被你看光了，扛不住了~
+        客官，妾身被你榨干了，扛不住了~
       </div>
       <div ref="sentinel" class="load-more-trigger"></div>
     </div>
   </div>
 </template>
-
 <script setup lang="ts">
-import { computed, onActivated, type Ref } from 'vue'
+import { ref, computed, onMounted, nextTick, onBeforeUnmount } from 'vue'
 import { useRouter } from 'vue-router'
 import AcgSection from '@/components/AcgSection.vue'
-import { useLazyLoad } from '@/composables/useLazyLoad'
+import { useAnimeStore } from '@/store/anime.store'
 
-// 类型：动漫数据项
-interface AnimeItem {
-  id: number | string
-  title?: string
-  cover?: string
-  videoUrl?: string
-  tags?: string[]
-  views?: number
-}
+const props = defineProps<{ scrollContainerRef: any }>()
 
-// 类型：模块
-interface Module {
-  id?: number
-  moduleTitle: string
-  layoutType: number
-  items: AnimeItem[]
-}
-
-// Props
-const props = defineProps<{
-  animes: Module[]
-  categoryTitle: string
-  activeTab: '漫画' | '动漫' | '小说' | '有声'
-  activeSubCategory: string
-  scrollContainerRef: Ref<HTMLElement | null>
-  onContentUpdated?: () => void
-}>()
-
+const animeStore = useAnimeStore()
 const router = useRouter()
 
-// 懒加载
-const allModules = computed(() => props.animes || [])
+const currentPage = ref(1)
+const pageSize = 2
+const limit = 15   // 一组最多几个动漫（和 AcgSection 卡片数一致）
+const sentinel = ref<HTMLElement | null>(null)
+let observer: IntersectionObserver | null = null
 
-const { visibleList, isLoading, noMore, sentinel } = useLazyLoad(allModules, {
-  batchSize: 2,
-  namespace: 'anime-recommend',
-  customScrollRoot: props.scrollContainerRef,
-  uniqueProps: {
-    tab: props.activeTab,
-    sub: props.activeSubCategory
-  }
+// 这里都按 animeStore 的推荐分组变量来
+const isLoading = computed(() => animeStore.recommendGroupsPage.loading)
+const total = computed(() => animeStore.recommendGroupsPage.total)
+const noMore = computed(() =>
+  animeStore.recommendGroupsPage.groups.length >= animeStore.recommendGroupsPage.total &&
+  !animeStore.recommendGroupsPage.loading
+)
+
+// 懒加载分页
+function setupObserver() {
+  if (observer) observer.disconnect()
+  observer = new window.IntersectionObserver(async entries => {
+    if (
+      entries[0].isIntersecting &&
+      !animeStore.recommendGroupsPage.loading &&
+      !noMore.value
+    ) {
+      currentPage.value++
+      await animeStore.loadRecommendGroups(currentPage.value, pageSize, limit, true)
+      await nextTick()
+      if (sentinel.value) observer!.observe(sentinel.value)
+    }
+  })
+  if (sentinel.value) observer.observe(sentinel.value)
+}
+
+onMounted(async () => {
+  currentPage.value = 1
+  await animeStore.loadRecommendGroups(currentPage.value, pageSize, limit)
+  setupObserver()
+})
+onBeforeUnmount(() => { if (observer) observer.disconnect() })
+
+const visibleList = computed(() => {
+  return (animeStore.recommendGroupsPage.groups || []).map(group => ({
+    id: group.id,
+    moduleTitle: group.name,
+    layoutType: group.layout_type || 'type1',
+    icon: group.icon || '',
+    items: (group.animes || []).slice(0, limit),
+    animesCount: (group.animes || []).length
+  }))
 })
 
-// 模块图标映射
-const iconMap: Record<number, string> = {
-  1: '/icons/new.svg',
-  2: '/icons/hot1.svg',
-  3: '/icons/collect.svg',
-  4: '/icons/dianzan.svg'
+// 滚动位置保存 & 恢复（和你漫画推荐页一致即可）
+const scrollKey = 'acg-scroll-anime-recommend'
+function saveScrollTop() {
+  const el = props.scrollContainerRef?.value;
+  if (el) {
+    const scrollTop = Math.max(0, el.scrollTop)
+    if (scrollTop > 0) sessionStorage.setItem(scrollKey, scrollTop.toString())
+  }
 }
-function getModuleIcon(moduleId?: number) {
-  return moduleId ? iconMap[moduleId] || null : null
+function restoreScrollTop() {
+  const el = props.scrollContainerRef?.value;
+  const saved = sessionStorage.getItem(scrollKey)
+  if (el && saved) {
+    const targetPos = parseInt(saved)
+    if (targetPos > 0 && el.scrollHeight > el.clientHeight) {
+      const restoreAttempt = (attempt = 0) => {
+        if (attempt >= 5) return
+        el.scrollTop = targetPos
+        if (Math.abs(el.scrollTop - targetPos) > 2) {
+          setTimeout(() => restoreAttempt(attempt + 1), 50 * (attempt + 1))
+        }
+      }
+      setTimeout(() => {
+        if (el.scrollHeight > el.clientHeight) {
+          restoreAttempt()
+        }
+      }, 100)
+    }
+  }
 }
+import { onActivated, onDeactivated } from 'vue'
+onActivated(restoreScrollTop)
+onDeactivated(saveScrollTop)
 
-// 当前路径
-function getCurrentFullPath() {
+function getCurrentFullPath(): string {
   return window.location.pathname + window.location.search
 }
 
-// 保存滚动
-function saveScrollTop() {
-  if (props.scrollContainerRef?.value) {
-    const scrollTop = props.scrollContainerRef.value.scrollTop
-    const key = `acg-scroll-${props.activeTab}-${props.activeSubCategory}`
-    sessionStorage.setItem(key, scrollTop.toString())
-  }
-}
-function emitSaveScroll() {
-  saveScrollTop()
-  window.dispatchEvent(new CustomEvent('acg-save-scroll'))
-}
+function emitSaveScroll() { saveScrollTop() }
 
-// 跳转播放页
-async function goToDetail(item: AnimeItem) {
+function goToDetail(item: any) {
   emitSaveScroll()
-
-  sessionStorage.setItem('acg-return-from', getCurrentFullPath())
-  sessionStorage.setItem('acg-return-tab', props.activeTab)
-  sessionStorage.setItem('acg-return-sub', props.activeSubCategory)
-
-  const module = await import(`@/mock/acg/anime/${item.id}.js`)
-  const animeData = module.default as AnimeItem
-
+  saveScrollTop()
+  sessionStorage.setItem('acg-return-from', JSON.stringify({
+    name: 'Acg',
+    query: { tab: '动漫', sub: '推荐' },
+  }))
+  sessionStorage.setItem('acg-return-tab', '动漫')
+  sessionStorage.setItem('acg-return-sub', '推荐')
   router.push({
-    name: 'PlayPage',
-    query: {
-      id: animeData.id,
-      src: encodeURIComponent(animeData.videoUrl || ''),
-      title: animeData.title,
-      cover: animeData.cover,
-      tags: JSON.stringify(animeData.tags || []),
-      views: animeData.views?.toString() || '0'
-    }
+    name: 'PlayPage', // 动漫播放页路由
+    params: { id: item.id },
+    query: { type: 'anime' }
   })
 }
+function goMore(module: any) {
+  emitSaveScroll()
+  saveScrollTop()
 
-// 跳转更多
-function goMore(module: Module) {
-  if (module.items && module.items.length > 0) {
-    emitSaveScroll()
-    sessionStorage.setItem('acg-return-from', getCurrentFullPath())
-    sessionStorage.setItem('acg-return-tab', props.activeTab)
-    sessionStorage.setItem('acg-return-sub', props.activeSubCategory)
-    const itemsStr = encodeURIComponent(JSON.stringify(module.items))
-    router.push({
-      name: 'AcgMoreListPage',
-      query: {
-        title: module.moduleTitle,
-        activeTab: props.activeTab,
-        activeSubCategory: props.activeSubCategory,
-        items: itemsStr,
-        from: getCurrentFullPath()
-      }
-    })
-  } else {
-    console.warn(`模块 ${module.moduleTitle} 没有更多内容.`)
+  if (!sessionStorage.getItem('more-entry-path')) {
+    sessionStorage.setItem('more-entry-path', getCurrentFullPath())
+    sessionStorage.setItem('more-entry-scroll', props.scrollContainerRef?.value?.scrollTop?.toString() || '0')
   }
+
+  sessionStorage.setItem('acg-return-from', getCurrentFullPath())
+  sessionStorage.setItem('acg-return-tab', '动漫')
+  sessionStorage.setItem('acg-return-sub', module.moduleTitle)
+  sessionStorage.setItem('moduleTitle', module.moduleTitle)
+  sessionStorage.setItem(`scroll-pos-${module.moduleTitle}`, props.scrollContainerRef?.value?.scrollTop?.toString() || '0')
+  if (module.id) {
+    sessionStorage.setItem('groupId', module.id.toString())
+    sessionStorage.removeItem('subCategoryId')
+  }
+  sessionStorage.setItem('type', 'anime')
+  router.push({ name: 'AcgMoreListPage' })
 }
-
-// 恢复滚动
-onActivated(() => {
-  const scrollKey = `acg-scroll-${props.activeTab}-${props.activeSubCategory}`
-  const savedScrollTop = sessionStorage.getItem(scrollKey)
-  if (props.scrollContainerRef?.value && savedScrollTop) {
-    requestAnimationFrame(() => {
-      props.scrollContainerRef!.value!.scrollTop = parseInt(savedScrollTop, 10)
-    })
-  }
-})
 </script>
 
 <style scoped>
-.acg-anime-recommend-wrapper {
+.acg-anime-wrapper {
   background: #f8f8f8;
-  min-height: calc(100vh - 37.33vw - 16vw); /* 140px + 60px -> vw */
+  height: calc(100vh - 140px - 60px);
+  overflow-y: auto;
+  position: relative;
 }
 .content-container {
-  max-width: 200vw; /* 如果想最大宽度750px，改为200vw或更小 */
-  margin: 0 auto;
+  width: 100%;
+  min-height: 100%;
+  padding-bottom: 20px;
 }
 .recommend-module {
   margin-bottom: 0;
@@ -194,69 +206,77 @@ onActivated(() => {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  margin: 0 1.33vw 2.13vw; /* 5px 8px */
-  font-size: 4.26vw; /* 16px */
+  margin: 0 1.33vw 2.13vw;
+  font-size: 4.26vw;
   font-weight: bold;
   color: #333;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 .left-title {
   display: flex;
   align-items: center;
 }
 .icon {
-  width: 5.33vw;  /* 20px */
-  height: 5.33vw;
-  margin-right: 1.6vw; /* 6px */
-}
-.recommend-icon {
   width: 5.33vw;
   height: 5.33vw;
-  margin-left: 1.6vw;
+  margin-right: 1.6vw;
+}
+.recommend-icon {
+  width: 28px;
+  height: 28px;
+  margin-left: 8px;
+  vertical-align: middle;
 }
 .more-btn {
-  font-size: 3.2vw; /* 12px */
+  font-size: 3.2vw;
   color: #ff6699;
-  padding: 0.8vw 1.33vw; /* 3px 5px */
-  border: 0.53vw solid #ff6699; /* 2px */
-  border-radius: 1.33vw; /* 5px */
+  padding: 0.8vw 1.33vw;
+  border: 0.53vw solid #ff6699;
+  border-radius: 1.33vw;
   cursor: pointer;
   display: inline-flex;
   align-items: center;
-  gap: 1.06vw; /* 4px */
+  gap: 1.06vw;
   transition: 0.3s;
   background: #fff;
   font-weight: 600;
-  box-shadow: 0 0.53vw 1.06vw rgba(0,0,0,0.1); /* 2px 4px */
-  margin-right: 2.66vw; /* 10px */
+  box-shadow: 0 0.53vw 1.06vw rgba(0,0,0,0.1);
+  margin-right: 2.66vw;
   white-space: nowrap;
-  max-width: 19.2vw; /* 72px */
+  max-width: 19.2vw;
   overflow: hidden;
+}
+.more-btn span {
+  font-size: 3.2vw;
+  line-height: 1;
 }
 .more-btn:hover {
   background: #ff6699;
   color: #fff;
 }
 .arrow-icon {
-  width: 2.66vw; /* 10px */
+  width: 2.66vw;
   height: 2.66vw;
 }
 .empty-data-message {
   text-align: center;
-  padding: 8vw; /* 30px */
+  padding: 13.3vw;
   color: #999;
-  font-size: 4.26vw; /* 16px */
+  font-size: 4.26vw;
 }
 .loading-tip {
   display: flex;
   flex-direction: column;
   align-items: center;
-  padding: 5.33vw 0; /* 20px */
-  font-size: 3.73vw; /* 14px */
+  padding: 5.33vw 0;
+  font-size: 3.73vw;
 }
 .custom-spinner {
-  width: 9.33vw;  /* 35px */
+  width: 9.33vw;
   height: 9.33vw;
-  margin-bottom: 2.13vw; /* 8px */
+  margin-bottom: 2.13vw;
   animation: spin 0.8s linear infinite;
 }
 @keyframes spin {
@@ -270,11 +290,11 @@ onActivated(() => {
   text-align: center;
   color: #999;
   font-weight: bold;
-  font-size: 3.73vw; /* 14px */
-  margin: 5.33vw 0; /* 20px */
+  font-size: 3.73vw;
+  margin: 5.33vw 0;
 }
 .load-more-trigger {
-  height: 13.33vw; /* 50px */
-  margin-top: 5.33vw; /* 20px */
+  height: 13.3vw;
+  margin-top: 5.33vw;
 }
 </style>

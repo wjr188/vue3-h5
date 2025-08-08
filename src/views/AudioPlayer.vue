@@ -531,8 +531,27 @@ function makeAudioData(target: any, novel: any): AudioItem {
     type: (target?.is_vip ? 'vip' : 'coin') as 'vip' | 'coin'
   }
 }
+function goBack() {
+  // 先读取搜索页返回标记
+  if (sessionStorage.getItem('search-main-is-return')) {
+    const activeTab = sessionStorage.getItem('search-main-return-tab')
+    const currentTab = sessionStorage.getItem('search-main-return-type')
+    const keyword = sessionStorage.getItem('search-main-keyword')
+    const category = sessionStorage.getItem('search-main-category')
+    const tag = sessionStorage.getItem('search-main-tag')
+    const sort = sessionStorage.getItem('search-main-sort')
+    const scrollTop = sessionStorage.getItem('search-main-scroll-top')
 
-function goBack() { window.history.back() }
+    router.replace({
+      name: 'SearchMainPage',
+      query: { activeTab, tabType: currentTab, keyword, category, tag, sort, scrollTop }
+    })
+    sessionStorage.removeItem('search-main-is-return')
+    return
+  }
+  // 其它情况走历史返回
+  window.history.back()
+}
 function goPromotion() { router.push('/promotion-share') }
 function goVip() { router.push('/vip') }
 function goCoinRecharge() { router.push('/vip?tab=coin') }
