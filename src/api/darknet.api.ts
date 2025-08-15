@@ -1,11 +1,11 @@
-import request from "@/utils/request";
+import service from "@/utils/request"; // 使用加密请求服务
 
 /**
  * 获取暗网首页推荐分组及分组下视频
  * @param params { page?: number; pageSize?: number }
  */
 export function fetchDarknetHome(params: { page?: number; pageSize?: number } = {}) {
-  return request.get("/api/h5/darknet/home", { params });
+  return service.get("darknet_home", params);
 }
 
 /**
@@ -17,14 +17,14 @@ export function fetchDarknetGroupVideos(
   groupId: number | string,
   params: { page?: number; pageSize?: number; sort?: string } = {}
 ) {
-  return request.get(`/api/h5/darknet/group/${groupId}/videos`, { params });
+  return service.get("darknet_group_videos", { groupId, ...params });
 }
 
 /**
  * 获取所有主分类
  */
 export function fetchH5DarknetCategoryList(params: { only_parents?: number } = {}) {
-  return request.get("/api/h5/darknet/categories/list", { params });
+  return service.get("darknet_categories_list", params);
 }
 
 /**
@@ -32,7 +32,7 @@ export function fetchH5DarknetCategoryList(params: { only_parents?: number } = {
  * @param params { parent_id: number; page?: number; pageSize?: number }
  */
 export function fetchDarknetCategoryWithVideos(params: { parent_id: number; page?: number; pageSize?: number }) {
-  return request.get("/api/darknet/videos/h5-list", { params });
+  return service.get("darknet_videos_h5_list", params);
 }
 
 /**
@@ -44,5 +44,5 @@ export function fetchDarknetCategoryVideos(
   category_id: number | string,
   params: { page?: number; pageSize?: number; sort?: string; random?: number } = {}
 ) {
-  return request.get(`/api/h5/darknet/category/${category_id}/videos`, { params });
+  return service.get("darknet_category_videos", { category_id, ...params });
 }

@@ -14,7 +14,7 @@ export interface PlayResponse {
   collectCount?: number
 }
 
-// 获取抖音视频列表
+// 获取抖音视频列表 - 使用加密API
 export function fetchDouyinVideos(params: {
   pageSize?: number
   last_id?: number
@@ -23,42 +23,42 @@ export function fetchDouyinVideos(params: {
   tag?: string
   category_name?: string
 } = {}) {
-  return request.get('/api/h5/douyin/videos', { params })
+  return request.get('douyin_video_h5_list', params)
 }
 
-// 获取抖音视频播放地址
+// 获取抖音视频播放地址 - 使用加密API
 export function fetchDouyinPlay(params: {
   id: number
   userId: string
 }): Promise<PlayResponse> {
-  return request.post('/api/h5/douyin/play', params)
+  return request.post('douyin_video_play', params)
 }
 
-// 获取抖音标签列表（发现页用）
+// 获取抖音标签列表（发现页用） - 使用加密API
 export function fetchDouyinTags() {
-  return request.get('/api/h5/douyin/tag/all')
+  return request.get('douyin_tag_all')
 }
 
-// 发现页专用：分页拉取视频列表
+// 发现页专用：分页拉取视频列表 - 使用加密API
 export function fetchDouyinDiscoverVideos(params: {
   page?: number
   pageSize?: number
   tag?: string
 } = {}) {
-  return request.get('/api/h5/douyin/discover', { params })
+  return request.get('douyin_video_discover', params)
 }
 
-// 获取单个抖音视频详情（播放页用）
+// 获取单个抖音视频详情（播放页用） - 使用加密API
 export function fetchDouyinVideoDetail(params: { id: number | string, userId?: string }): Promise<any> {
-  return request.get('/api/h5/douyin/video/detail', { params })
+  return request.get('douyin_video_h5_detail', params)
 }
 
-// H5搜索视频接口
+// H5搜索视频接口 - 使用加密API
 export function searchDouyinVideos(params: {
   keyword: string
   page?: number
   limit?: number
 } = { keyword: '' }) {
-  return request.get('/api/h5/douyin/search', { params })
+  return request.get('douyin_video_search', params)
 }
 

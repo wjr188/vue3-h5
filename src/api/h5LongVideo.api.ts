@@ -29,28 +29,29 @@ export interface H5LongVideoDetail {
   vip: number;          // 兼容
 }
 
-// 首页推荐分组及分组下视频（只基础信息）
+// 首页推荐分组及分组下视频（只基础信息）- 使用加密API
 export async function fetchH5LongHome(params: { page?: number; pageSize?: number } = {}): Promise<any> {
   try {
-    // 拼接 GET 参数
-    const res = await request.get("/api/h5/long/home", { params });
+    // 使用加密API调用
+    const res = await request.get("h5_long_home", params);
     return res;
   } catch (err: any) {
     return [];
   }
 }
 
-// 视频详情
+// 视频详情 - 使用加密API
 export function fetchH5LongVideoDetail(id: number | string): Promise<{ code: number; msg: string; data: H5LongVideoDetail }> {
-  return request.get(`/api/h5/long/videos/${id}`);
+  return request.get("h5_long_video_detail", { id });
 }
 
-// 推荐分组下所有视频（分页，前台专用接口）
+// 推荐分组下所有视频（分页，前台专用接口）- 使用加密API
 export async function fetchRecommendGroupVideos(
   groupId: number,
   options: { page?: number; pageSize?: number; sort?: string; random?: number } = {}
 ): Promise<{ code: number; msg: string; data: { list: H5LongVideoDetail[]; total: number } }> {
-  return request.get(`/api/h5/long/group/${groupId}/videos`, {
-    params: options
+  return request.get("h5_long_group_videos", {
+    groupId,
+    ...options
   });
 }

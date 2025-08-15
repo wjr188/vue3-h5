@@ -119,8 +119,9 @@ function clearSearchTabCache() {
 }
 
 function goToMyShelf() {
-  router.push('/acg-shelf')
+  router.push({ name: 'MyFavorites' })
 }
+
 
 function goToVip() {
   router.push('/vip')

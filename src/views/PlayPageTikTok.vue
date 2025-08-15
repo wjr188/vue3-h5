@@ -189,7 +189,7 @@
 <script setup lang="ts">
 import { ref, onMounted, onBeforeUnmount } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
-import { Swiper as SwiperClass } from 'swiper/types'
+import type { Swiper as SwiperType } from 'swiper'
 import { Swiper, SwiperSlide } from 'swiper/vue'
 import 'swiper/css'
 import NativePlayer from '../components/NativePlayer.vue'
@@ -206,7 +206,7 @@ const userStore = useUserStore() // 👈 实例化 userStore
 
 // 直接使用 DouyinVideo 类型，不需要重新定义
 // Swiper 类型
-const swiperRef = ref<SwiperClass | null>(null)
+const swiperRef = ref<SwiperType | null>(null)
 const playerRef = ref<any>(null)
 const videoList = ref<DouyinVideo[]>([])
 const currentIndex = ref(Number(route.query.index || 0))
@@ -273,12 +273,13 @@ async function loadVideos(init = false) {
     if (init && swiperRef.value && videoList.value.length > 0) {
       // 使用延时确保 DOM 更新完成
       setTimeout(() => {
-        if (swiperRef.value && typeof swiperRef.value.slideTo === 'function') {
-          swiperRef.value.slideTo(currentIndex.value, 0, false)
+        const swiper = swiperRef.value
+        if (swiper && typeof swiper.slideTo === 'function') {
+          swiper.slideTo(currentIndex.value, 0, false)
           // 手动触发 onSlideChange 确保状态同步
-          if (swiperRef.value.realIndex !== currentIndex.value) {
+          if (swiper.realIndex !== currentIndex.value) {
             // 如果 slideTo 无效，直接设置 currentIndex 为实际显示的索引
-            currentIndex.value = swiperRef.value.realIndex
+            currentIndex.value = swiper.realIndex
           }
         }
       }, 200)
@@ -287,7 +288,8 @@ async function loadVideos(init = false) {
     // 备用方案：如果是初始化且有目标索引，但 Swiper 跳转失败，则直接调整 currentIndex
     if (init && currentIndex.value > 0 && swiperRef.value) {
       setTimeout(() => {
-        if (swiperRef.value && swiperRef.value.realIndex === 0 && currentIndex.value !== 0) {
+        const swiper = swiperRef.value
+        if (swiper && swiper.realIndex === 0 && currentIndex.value !== 0) {
           // 既然跳转不了，就让第0个视频显示播放按钮
           currentIndex.value = 0
         }
@@ -297,8 +299,9 @@ async function loadVideos(init = false) {
     // 强制同步机制：1秒后检查并修正状态不一致问题
     if (init) {
       setTimeout(() => {
-        if (swiperRef.value) {
-          const realIndex = swiperRef.value.realIndex ?? swiperRef.value.activeIndex ?? 0
+        const swiper = swiperRef.value
+        if (swiper) {
+          const realIndex = swiper.realIndex ?? swiper.activeIndex ?? 0
           if (currentIndex.value !== realIndex) {
             currentIndex.value = realIndex
           }
@@ -321,15 +324,20 @@ onMounted(async () => {
   // 重置 store 状态，避免之前的缓存干扰
   douyinStore.reset()
   
-  // 检查是否从搜索页跳转过来
-  if (route.query.from === 'search' && route.query.id) {
-    // 从搜索页跳转，调用单个视频详情接口
+  // 检查是否从搜索页或收藏页跳转过来
+  if ((route.query.from === 'search' || route.query.from === 'favorites') && route.query.id) {
+    // 从搜索页或收藏页跳转，调用单个视频详情接口
     try {
       loading.value = true
       const videoDetail = await douyinStore.fetchVideoDetail(route.query.id as string, userStore.uuid)
       // 将单个视频设置到视频列表中
       videoList.value = [videoDetail]
       currentIndex.value = 0
+      
+      // 🔥 如果是从收藏页跳转，设置收藏状态为true
+      if (route.query.from === 'favorites') {
+        videoDetail.collected = true
+      }
     } catch (error) {
       // 加载视频详情失败
     } finally {
@@ -354,30 +362,18 @@ onMounted(async () => {
           // 立即跳转到第一个视频
           if (swiperRef.value) {
             setTimeout(() => {
-              swiperRef.value?.slideTo(0, 0, false)
+              const swiper = swiperRef.value
+              if (swiper && typeof swiper.slideTo === 'function') {
+                swiper.slideTo(0, 0, false)
+              }
             }, 100)
           }
         } else if (clickedIndex === 0) {
           // 已经在第一个位置
           currentIndex.value = 0
         } else {
-          // 如果在当前列表中找不到，获取详情并放在第一位
-          try {
-            const videoDetail = await douyinStore.fetchVideoDetail(route.query.id as string, userStore.uuid)
-            videoList.value.unshift(videoDetail)
-            currentIndex.value = 0
-            
-            // 立即跳转到第一个视频
-            if (swiperRef.value) {
-              setTimeout(() => {
-                swiperRef.value?.slideTo(0, 0, false)
-              }, 100)
-            }
-          } catch (error) {
-            // 获取视频详情失败
-            // 失败时保持默认流程
-            currentIndex.value = 0
-          }
+          // 如果在当前列表中找不到，直接使用第一个视频（不调用单个接口）
+          currentIndex.value = 0
         }
       }
     } catch (error) {
@@ -387,7 +383,7 @@ onMounted(async () => {
 })
 
 // 滑动到最后一条时自动加载更多
-const onSlideChange = (swiper: SwiperClass) => {
+const onSlideChange = (swiper: SwiperType) => {
   currentIndex.value = swiper.realIndex
   shouldPlay.value = false // 确保切换视频时重置播放状态
   showVipModal.value = false // 切换视频时关闭弹窗
@@ -405,7 +401,7 @@ const onSlideChange = (swiper: SwiperClass) => {
   }
 }
 
-const onSwiperReady = (swiper: SwiperClass) => {
+const onSwiperReady = (swiper: SwiperType) => {
   swiperRef.value = swiper
   // 确保初始状态正确
   shouldPlay.value = false
@@ -686,7 +682,13 @@ const setPlayerRef = (index: number, el: any) => {
 }
 
 const goBack = () => {
-  router.go(-1)
+  // 🔥 处理从收藏页跳转的返回逻辑
+  if (route.query.from === 'favorites') {
+    // 从收藏页跳转过来的，直接返回收藏页
+    router.back()
+  } else {
+    router.go(-1)
+  }
 }
 
 

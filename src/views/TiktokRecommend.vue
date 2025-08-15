@@ -52,7 +52,7 @@
               <span class="tag" v-for="tag in video.tags" :key="tag">#{{ tag }}</span>
             </div>
             
-            <!-- VIP提示（放在tags下方） -->
+            <!-- VIP提示 -->
             <div
               v-if="!video.unlocked && (video.vip || video.isVip)"
               class="vip-badge"
@@ -61,7 +61,7 @@
               开通VIP观看完整视频
             </div>
             
-            <!-- 金币提示（放在tags下方） -->
+            <!-- 金币提示 -->
             <div
               v-else-if="!video.unlocked && Number(video.coin) > 0"
               class="coin-badge"
@@ -88,6 +88,24 @@
               限时免费
             </div>
           </div>
+          
+          <!-- 热门标签（放在最下面，在底部导航栏上方） -->
+          <div class="hot-tags-bottom" v-if="currentKeyword">
+            <div class="hot-tags-container">
+              <div class="hot-tags-wrapper">
+                <img src="/icons/remen6.png" class="hot-tags-icon" alt="热门" />
+                <div class="hot-tags-scroll">
+                  <div class="hot-tags-text" @click="handleKeywordClick">
+                    {{ currentKeyword.display_label }}
+                  </div>
+                </div>
+                <div class="hot-tags-arrow" @click="handleKeywordClick">
+                  <span>›</span>
+                </div>
+              </div>
+            </div>
+          </div>
+          
           <div class="video-actions">
             <img class="avatar" v-lazy="video.avatar" />
             <div class="action-item" @click="handleLike(video)">
@@ -187,6 +205,8 @@ import { useHistoryStore } from '@/store/useHistoryStore'
 import { useDouyinVideosStore, type DouyinVideo } from '@/store/douyin.store'
 import { useUserStore } from '@/store/user'
 import { likeContent, collectContent, unlikeContent, uncollectContent } from '@/api/userAction.api'
+import { getRandomKeyword, recordKeywordDisplay, recordKeywordClick, type KeywordItem } from '@/api/keyword.api'
+import { trackLongVideoAction } from '@/api/longVideo.api'
 
 interface VideoItem {
   id: number
@@ -226,6 +246,9 @@ const showVipModal = ref(false)
 const showCoinModal = ref(false)
 const isLoading = ref(false)
 
+// 关键词相关状态
+const currentKeyword = ref<KeywordItem | null>(null)
+
 let toastTimer: ReturnType<typeof setTimeout> | null = null
 
 function showToast(msg: string, duration = 1500) {
@@ -252,6 +275,7 @@ const loadMoreVideos = async () => {
 }
 
 const onSlideChange = (swiper: SwiperType) => {
+  const oldIndex = currentIndex.value
   currentIndex.value = swiper.activeIndex
   shouldPlay.value = false
   showVipModal.value = false
@@ -260,6 +284,17 @@ const onSlideChange = (swiper: SwiperType) => {
   currentTime.value = 0
   duration.value = 0
   // 不要 video.value = null，避免弹窗数据丢失
+
+  // ★★★ 记录上一个视频的浏览埋点（用户已经看过的视频） ★★★
+  if (oldIndex >= 0 && oldIndex < douyinStore.videos.length) {
+    const previousVideo = douyinStore.videos[oldIndex]
+    if (previousVideo) {
+      recordVideoView(previousVideo)
+    }
+  }
+
+  // 每次切换视频时获取新的关键词
+  loadRandomKeyword()
 
   // 修改触发条件：滑到最后一个视频时才触发懒加载
   if (
@@ -308,19 +343,15 @@ const onRequestPlay = async () => {
   // ★★★ 关键修复：有试看次数的用户，不管什么类型的视频都应该能试看 ★★★
   const remaining = userStore.userInfo.dyVideoMax - userStore.userInfo.dyVideoUsed
   if (remaining > 0) {
-    console.log('🎯 推荐页：有试看次数，直接请求播放接口', { remaining, videoType: videoData.vip || videoData.isVip ? 'VIP' : (Number(videoData.coin) > 0 ? 'Coin' : 'Free') })
     try {
       const res = await douyinStore.fetchPlayInfo(videoData.id, userStore.uuid)
       if (res?.canPlay && res?.playUrl) {
         videoData.src = res.playUrl
         shouldPlay.value = true
-        console.log('✅ 推荐页：试看播放成功')
       } else {
-        console.log('❌ 推荐页：播放接口返回失败：', res)
         // 🔧 播放失败时刷新用户信息，可能是试看次数已用完
         await userStore.fetchUserInfo(true)
         const newRemaining = userStore.userInfo.dyVideoMax - userStore.userInfo.dyVideoUsed
-        console.log('🔄 推荐页：刷新后剩余次数：', newRemaining)
         
         if (newRemaining <= 0) {
           // 试看次数已用完，显示对应弹窗
@@ -338,11 +369,9 @@ const onRequestPlay = async () => {
         }
       }
     } catch (e) {
-      console.log('❌ 推荐页：播放接口异常：', e)
       // 🔧 播放异常时也刷新用户信息
       await userStore.fetchUserInfo(true)
       const newRemaining = userStore.userInfo.dyVideoMax - userStore.userInfo.dyVideoUsed
-      console.log('🔄 推荐页：异常后刷新剩余次数：', newRemaining)
       
       if (newRemaining <= 0) {
         // 试看次数已用完，显示对应弹窗
@@ -368,11 +397,9 @@ const onRequestPlay = async () => {
   const isVipCardUser = userStore.userInfo.can_view_vip_video === 1
 
   // 没有试看次数的情况下才检查权限
-  console.log('🚫 推荐页：没有试看次数，检查用户权限', { remaining, isVipVideo, isCoinVideo, isCoinCardUser, isVipCardUser })
 
   // 其它情况（已解锁、金币视频等）按原逻辑处理
   if (videoData.unlocked) {
-    console.log('🔓 推荐页：视频已解锁，直接播放')
     try {
       const res = await douyinStore.fetchPlayInfo(videoData.id, userId)
       if (res.canPlay && res.playUrl) {
@@ -387,7 +414,6 @@ const onRequestPlay = async () => {
 
   // 金币卡用户可以看金币视频
   if (isCoinVideo && isCoinCardUser) {
-    console.log('💰 推荐页：金币卡用户观看金币视频')
     try {
       const res = await douyinStore.fetchPlayInfo(videoData.id, userId)
       if (res.canPlay && res.playUrl) {
@@ -402,7 +428,6 @@ const onRequestPlay = async () => {
 
   // VIP卡用户可以看VIP视频
   if (isVipVideo && isVipCardUser) {
-    console.log('👑 推荐页：VIP卡用户观看VIP视频')
     try {
       const res = await douyinStore.fetchPlayInfo(videoData.id, userId)
       if (res.canPlay && res.playUrl) {
@@ -417,14 +442,11 @@ const onRequestPlay = async () => {
 
   // 没有权限的情况，显示相应弹窗
   if (isCoinVideo) {
-    console.log('💰 推荐页：金币视频，显示金币弹窗')
     showCoinModal.value = true
   } else if (isVipVideo) {
-    console.log('👑 推荐页：VIP视频，显示VIP弹窗')
     showVipModal.value = true
   } else {
     // 其他情况直接播放
-    console.log('🎬 推荐页：其他情况，直接播放')
     try {
       const res = await douyinStore.fetchPlayInfo(videoData.id, userId)
       if (res.canPlay && res.playUrl) {
@@ -455,6 +477,9 @@ const onPlayed = () => {
     time: new Date().toISOString(),
     data: item
   })
+  
+  // ★★★ 记录视频播放的浏览埋点 ★★★
+  recordVideoView(item)
 }
 
 const onSeek = (time: number) => {
@@ -474,6 +499,46 @@ const setPlayerRef = (
 
 const goToShare = () => {
   router.push('/promotion-share')
+}
+
+// 加载随机关键词
+const loadRandomKeyword = async () => {
+  try {
+    const data = await getRandomKeyword() // 完全随机获取关键词
+    if (data) {
+      currentKeyword.value = data
+    } else {
+      // 如果没有获取到关键词，清空显示
+      currentKeyword.value = null
+    }
+  } catch (error) {
+    currentKeyword.value = null
+  }
+}
+
+// 处理关键词点击事件
+const handleKeywordClick = async () => {
+  if (!currentKeyword.value) return
+  
+  try {
+    // 记录点击次数（保留点击统计，用于后台分析）
+    await recordKeywordClick(currentKeyword.value.id)
+  } catch (e) {
+    // 静默处理错误，不影响用户体验
+  }
+  
+  // 跳转到搜索页，使用keyword字段进行搜索
+  router.push({
+    path: '/search',
+    query: {
+      keyword: currentKeyword.value.keyword
+    }
+  })
+}
+
+// 热门标签滚动功能（保留原有功能作为备用）
+const scrollHotTags = () => {
+  handleKeywordClick()
 }
 
 // 点赞功能
@@ -576,25 +641,14 @@ async function handleCollect(video: DouyinVideo) {
 function handleUnlock(item: DouyinVideo) {
   currentVideo.value = item;
   
-  console.log('🔵 推荐页 handleUnlock 被调用:', {
-    videoId: item.id,
-    title: item.title,
-    unlocked: item.unlocked,
-    isVip: item.isVip,
-    vip: item.vip,
-    coin: item.coin
-  })
-  
   // 已解锁视频直接播放，不需要任何弹窗
   if (item.unlocked) {
-    console.log('🔵 推荐页：视频已解锁，直接播放')
     onRequestPlay()
     return
   }
   
   // 免费视频直接播放
   if ((!item.vip && !item.isVip) && (!item.coin || Number(item.coin) === 0)) {
-    console.log('🔵 推荐页：免费视频，直接播放')
     onRequestPlay()
     return
   }
@@ -602,29 +656,42 @@ function handleUnlock(item: DouyinVideo) {
   // ★★★ 关键修复：有试看次数的用户，不管什么类型的视频都应该能试看 ★★★
   const remaining = userStore.userInfo.dyVideoMax - userStore.userInfo.dyVideoUsed
   if (remaining > 0) {
-    console.log('🎯 推荐页 handleUnlock：有试看次数，直接播放', { remaining, videoTitle: item.title })
     onRequestPlay()
     return
   }
 
-  // 没有试看次数时才显示弹窗
+  // 没有试看次数时才检查权限
   const isVipVideo = !!item.vip || !!item.isVip
   const isCoinVideo = Number(item.coin) > 0
+  const isCoinCardUser = userStore.userInfo.can_watch_coin === 1
+  const isVipCardUser = userStore.userInfo.can_view_vip_video === 1
 
+  // 如果是金币视频，优先处理金币逻辑
   if (isCoinVideo) {
-    console.log('🔵 推荐页：没有试看次数，金币视频显示金币弹窗')
+    // 金币卡用户可以直接尝试播放
+    if (isCoinCardUser) {
+      onRequestPlay()
+      return
+    }
+    // 普通用户显示金币弹窗
     showCoinModal.value = true;
     return;
   }
 
+  // 如果是VIP视频
   if (isVipVideo) {
-    console.log('🔵 推荐页：没有试看次数，VIP视频显示VIP弹窗')
+    // VIP卡用户可以直接尝试播放
+    if (isVipCardUser) {
+      onRequestPlay()
+      return
+    }
+    
+    // 其他情况显示VIP弹窗
     showVipModal.value = true
     return
   }
 
   // 其他情况直接播放
-  console.log('🔵 推荐页：其他情况，直接播放')
   onRequestPlay()
 }
 
@@ -657,6 +724,10 @@ function checkVideoPermission(video) {
 onMounted(async () => {
   await userStore.fetchUserInfo() // ← 加这一行，必须 await
   loadMoreVideos()
+  
+  // 页面加载时获取初始关键词
+  await loadRandomKeyword()
+  
   console.log('视频列表', douyinStore.videos)
   document.body.style.overflow = 'hidden'
 })
@@ -702,12 +773,31 @@ const isSuperUser = canViewVip && canWatchCoin
 const isVipUser = canViewVip && !canWatchCoin
 const isCoinUser = canWatchCoin && !canViewVip
 const isNormalUser = !canViewVip && !canWatchCoin
+
+// 记录视频浏览埋点
+async function recordVideoView(video: DouyinVideo) {
+  if (!video || !userStore.uuid) return
+  
+  try {
+    console.log('开始记录浏览埋点:', { id: video.id, type: 'douyin', user_uuid: userStore.uuid })
+    const response = await trackLongVideoAction({
+      id: video.id,
+      type: 'douyin', // 抖音视频类型
+      action: 'view',
+      user_uuid: userStore.uuid
+    })
+    console.log('浏览埋点记录成功:', response)
+  } catch (error) {
+    // 埋点失败不影响用户体验，静默处理
+    console.error('浏览埋点记录失败:', error)
+  }
+}
 </script>
 
 <style scoped>
 .tiktok-wrapper {
   width: 100vw;
-  background: #000;
+  background: transparent; /* 改为透明 */
   position: relative;
   overflow: hidden;
   min-height: 100vh; /* 兼容极端情况，必要时可加 */
@@ -716,9 +806,9 @@ const isNormalUser = !canViewVip && !canWatchCoin
   position: absolute;
   left: 0;
   right: 0;
-  top: 14.93vw; /* 顶部栏高度 */
+  top: 0; /* 从顶部开始 */
   bottom: calc(16vw + env(safe-area-inset-bottom, 0)); /* TabBar高度+安全区 */
-  background: #000;
+  background: transparent; /* 改为透明 */
   z-index: 2;
   overflow-y: auto;
   height: auto !important;
@@ -732,7 +822,7 @@ const isNormalUser = !canViewVip && !canWatchCoin
   width: 100vw;
   height: 100%;
   min-height: 0;
-  background: #000;
+  background: transparent; /* 改为透明 */
   position: relative;
   box-sizing: border-box;
 }
@@ -756,7 +846,7 @@ const isNormalUser = !canViewVip && !canWatchCoin
 .video-overlay {
   position: absolute;
   left: 4.26vw;
-  bottom: 6vw;
+  bottom: 15vw;
   color: white;
   z-index: 5;
   width: 66%;
@@ -793,12 +883,84 @@ const isNormalUser = !canViewVip && !canWatchCoin
   margin-bottom: 2.66vw;
 }
 .tag {
-  background: rgba(120, 120, 120, 0.3);
+  background: rgba(60, 60, 60, 0.8);
   color: #ffcc00;
   font-size: 3.2vw;
   padding: 0.8vw 2.66vw;
   border-radius: 1.6vw;
 }
+
+/* 热门标签底部容器 */
+.hot-tags-bottom {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 10;
+}
+
+/* 热门标签样式 */
+.hot-tags-container {
+  width: 100%;
+}
+
+.hot-tags-wrapper {
+  display: flex;
+  align-items: center;
+  gap: 2.5vw;
+  width: 100%;
+  background: rgba(0, 0, 0, 0.6);
+  padding: 1.5vw 3.5vw;
+  backdrop-filter: blur(4px);
+}
+
+.hot-tags-icon {
+  width: 4vw;
+  height: 4vw;
+  flex-shrink: 0;
+  filter: drop-shadow(0 2px 4px rgba(0, 0, 0, 0.5));
+}
+
+.hot-tags-scroll {
+  flex: 1;
+  overflow: hidden;
+  position: relative;
+}
+
+.hot-tags-text {
+  color: rgba(255, 255, 255, 0.9);
+  font-size: 3.5vw;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  line-height: 1.2;
+}
+
+.hot-tags-text:hover {
+  color: #fff;
+}
+
+.hot-tags-wrapper:hover {
+  background: rgba(0, 0, 0, 0.6);
+  backdrop-filter: blur(6px);
+}
+
+.hot-tags-arrow {
+  color: rgba(255, 255, 255, 0.7);
+  font-size: 4.5vw;
+  font-weight: bold;
+  flex-shrink: 0;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.hot-tags-arrow:hover {
+  color: #fff;
+  transform: translateX(2px);
+}
+
 .vip-badge {
   display: inline-block;
   padding: 2px 12px;
@@ -861,7 +1023,7 @@ const isNormalUser = !canViewVip && !canWatchCoin
 .video-actions {
   position: absolute;
   right: 4.26vw;
-  bottom: 8vw;
+  bottom: 15vw;
   display: flex;
   flex-direction: column;
   align-items: center;

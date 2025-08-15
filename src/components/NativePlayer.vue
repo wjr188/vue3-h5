@@ -96,6 +96,8 @@ const useNativeHLS = isIOS && canPlayHLSNatively()
 let hls: Hls | null = null
 let rafId: number | null = null
 let iconTimer: ReturnType<typeof setTimeout> | null = null
+// 新增：用于避免并发 play()
+let playingPromise: Promise<void> | null = null
 
 // 图标 0.5 秒后隐藏
 const showIconTemporarily = () => {
@@ -106,25 +108,34 @@ const showIconTemporarily = () => {
   }, 500)
 }
 
-// 播放
+// 播放（最小改动：去重、忽略 AbortError）
 const play = async () => {
   const video = videoRef.value
   if (!video || forceUseNativeControls) return
+  // 已经在播放或正在发起 play 时不重复触发
+  if (!video.paused || playingPromise) return
   try {
-    await video.play()
+    playingPromise = video.play()
+    await playingPromise
     isPlaying.value = true
     showIconTemporarily()
     updateProgress()
     emit('played')
-  } catch (e) {
-    console.warn('播放失败', e)
+  } catch (e: any) {
+    // 常见并发导致的中断错误，忽略即可
+    if (!(e && (e.name === 'AbortError' || e.code === 20))) {
+      console.warn('播放失败', e)
+    }
+  } finally {
+    playingPromise = null
   }
 }
 
-// 暂停
+// 暂停（小改动：已暂停时不重复）
 const pause = () => {
   const video = videoRef.value
   if (!video || forceUseNativeControls) return
+  if (video.paused) return
   video.pause()
   isPlaying.value = false
   showIconTemporarily()
@@ -184,7 +195,7 @@ watch(
   }
 )
 
-// 加载视频
+// 加载视频（最小改动：用 canplay 一次性触发播放，删除 setTimeout 播放）
 const loadVideo = (source: string) => {
   const video = videoRef.value
   if (!video || !source) return
@@ -214,7 +225,15 @@ const loadVideo = (source: string) => {
   video.addEventListener('loadeddata', onLoadedData)
   video.addEventListener('error', onError)
 
-  if (props.shouldPlay) setTimeout(play, 100)
+  // 仅在 canplay 后播放一次，避免与其他地方的 play 竞态
+  if (props.shouldPlay) {
+    const handleCanPlay = () => {
+      video.removeEventListener('canplay', handleCanPlay)
+      // 再次确认当前仍需播放
+      if (props.shouldPlay) play()
+    }
+    video.addEventListener('canplay', handleCanPlay)
+  }
 }
 
 function onLoadedData() {}

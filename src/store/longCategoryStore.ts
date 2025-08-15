@@ -1,9 +1,6 @@
 import { defineStore } from "pinia";
 import {
   fetchLongVideoParentCategories,
-  addLongVideoParentCategory,
-  addLongVideoChildCategory,
-  fetchLongVideoChildCategories,
 } from "@/api/longCategory.api";
 
 export const useLongCategoryStore = defineStore("longCategory", {
@@ -28,21 +25,31 @@ export const useLongCategoryStore = defineStore("longCategory", {
     async loadChildren(parent_id: number, page = 1, page_size = 20) {
       this.loading = true;
       try {
-        const res = await fetchLongVideoChildCategories(parent_id, page, page_size) as any;
-        const list = Array.isArray(res.children) ? res.children : [];
-        this.childrenMap[parent_id] = list;
-        this.children = list;
-        this.childrenTotal = res.total || 0; // 如果后端返回 total
+        // TODO: 需要实现 fetchLongVideoChildCategories API
+        // const res = await fetchLongVideoChildCategories(parent_id, page, page_size) as any;
+        // const list = Array.isArray(res.children) ? res.children : [];
+        // this.childrenMap[parent_id] = list;
+        // this.children = list;
+        // this.childrenTotal = res.total || 0; // 如果后端返回 total
+        
+        // 临时返回空数据
+        this.childrenMap[parent_id] = [];
+        this.children = [];
+        this.childrenTotal = 0;
       } finally {
         this.loading = false;
       }
     },
     async addParentCategory(name: string) {
-      await addLongVideoParentCategory({ name });
+      // TODO: 需要实现 addLongVideoParentCategory API
+      // await addLongVideoParentCategory({ name });
+      console.warn('addLongVideoParentCategory API 尚未实现');
       await this.loadCategories();
     },
     async addChildCategory(name: string, parent_id: number) {
-      await addLongVideoChildCategory({ name, parent_id });
+      // TODO: 需要实现 addLongVideoChildCategory API
+      // await addLongVideoChildCategory({ name, parent_id });
+      console.warn('addLongVideoChildCategory API 尚未实现');
       await this.loadCategories();
     },
   },

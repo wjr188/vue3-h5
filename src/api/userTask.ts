@@ -24,12 +24,12 @@ export interface TaskStatusResponse {
 
 /** 查询积分任务状态 */
 export function getTaskStatus() {
-  return request.get<TaskStatusResponse>("/api/user/task-status");
+  return request.get<TaskStatusResponse>("user_task_status");
 }
 
 /** 领取积分任务奖励 */
 export function claimTask(type: string) {
-  return request.post<null>("/api/user/claim-task", { type });
+  return request.post<null>("user_claim_task", { type });
 }
 
 // --- 积分兑换相关 ---
@@ -45,11 +45,11 @@ export interface PointsExchangeItem {
 }
 
 export function fetchPointsExchangeList() {
-  return request.get<PointsExchangeItem[]>('/api/user/points/list');
+  return request.get<PointsExchangeItem[]>('points_exchange_list');
 }
 
 export function exchangeItem(id: number) {
-  return request.post('/api/user/points/exchange', { id });
+  return request.post('points_exchange', { id });
 }
 
 
@@ -73,6 +73,6 @@ export interface PointsExchangeRecord {
  * @returns { list: PointsExchangeRecord[], total: number }
  */
 export function fetchPointsExchangeRecords(params = {}): Promise<{ list: PointsExchangeRecord[]; total: number }> {
-  return request.get('/api/points/records', { params });
+  return request.get('points_exchange_records', params);
 }
 

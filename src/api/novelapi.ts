@@ -1,4 +1,4 @@
-import request from '@/utils/request'
+import service from '@/utils/request'
 
 interface NovelCategoryListResponse {
   mainCategories: any[]
@@ -48,34 +48,34 @@ interface NovelTagListResponse {
 }
 
 export function getNovelCategoryList(params?: any): Promise<NovelCategoryListResponse> {
-  return request.get('api/text_novel_category/list', { params })
+  return service.get('text_novel_category_list', params)
 }
 
 export function getNovelList(params?: any): Promise<NovelListResponse> {
-  return request.get('api/text_novel/list', { params })
+  return service.get('text_novel_list', params)
 }
 
 export function getNovelDetail(id: number | string): Promise<NovelDetailResponse> {
-  return request.get('api/text_novel/read', { params: { id } })
+  return service.get('text_novel_detail', { id })
 }
 
 export function getNovelChapters(params?: any): Promise<NovelChapterListResponse> {
-  return request.get('api/text_novel_chapter/list', { params })
+  return service.get('text_novel_chapter_list', params)
 }
 
 export function getNovelChapterDetail(id: number | string): Promise<NovelChapterDetailResponse> {
-  return request.get(`api/text_novel_chapter/${id}`)
+  return service.get('text_novel_chapter_detail', { id })
 }
 
 export function getNovelRecommendAllWithNovels(params?: any): Promise<RecommendGroupResponse> {
-  return request.get('api/novel-recommend/group/allWithNovels', { params })
+  return service.get('text_novel_recommend_all_groups', params)
 }
 
 export function getNovelRecommendGroupNovels(params: { groupId: number | string; page?: number; pageSize?: number }): Promise<RecommendGroupNovelsResponse> {
   const { groupId, ...rest } = params
-  return request.get(`api/novel-recommend/group/${groupId}/novels`, { params: rest })
+  return service.get('text_novel_recommend_group_novels', { ...rest, groupId })
 }
 
 export function getNovelTagList(params?: any): Promise<NovelTagListResponse> {
-  return request.get('api/text_novel_tag/list', { params })
+  return service.get('text_novel_tag_list', params)
 }

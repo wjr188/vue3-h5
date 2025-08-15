@@ -39,17 +39,17 @@ export interface GroupAnimesRes {
 export interface AnimeTagsRes {
   data: AnimeTag[]
 }
-// 分类相关
+// 分类相关 - 使用加密API
 export function fetchAnimeMainCategories(onlyMain = 1): Promise<AnimeMainCategoryRes> {
-  return request.get('/api/anime/category/list', { params: { onlyMain } })
+  return request.get('anime_category_list', { onlyMain })
 }
 export function fetchAnimeGroup(parentId: number, page = 1, pageSize = 2, limit = 6): Promise<AnimeGroupRes> {
-  return request.get('/api/anime/category/group', { params: { parentId, page, pageSize, limit } })
+  return request.get('anime_category_group', { parentId, page, pageSize, limit })
 }
 export function fetchAnimeBySubCategory(subCategoryId: number, page = 1, pageSize = 15): Promise<AnimeBySubCategoryRes> {
-  return request.get('/api/anime/category/sub/animes', { params: { subCategoryId, page, pageSize } })
+  return request.get('anime_sub_animes', { subCategoryId, page, pageSize })
 }
-// H5动漫视频列表（多条件筛选 + 分页 + 排序）
+// H5动漫视频列表（多条件筛选 + 分页 + 排序） - 使用加密API
 export function fetchAnimeVideoList(params: {
   keyword?: string
   parentId?: number
@@ -62,21 +62,21 @@ export function fetchAnimeVideoList(params: {
   pageSize?: number
   limit?: number
 }): Promise<AnimeBySubCategoryRes> {
-  return request.get('/api/h5/anime/videos/list', { params })
+  return request.get('anime_video_list', params)
 }
 
-// 推荐分组相关
+// 推荐分组相关 - 使用加密API
 export function fetchAnimeRecommendGroups(page = 1, pageSize = 2, limit = 9): Promise<RecommendGroupsRes> {
-  return request.get('/api/anime/recommend/all', { params: { page, pageSize, limit } })
+  return request.get('anime_recommend_all', { page, pageSize, limit })
 }
 export function fetchAnimeGroupAnimes(groupId: number, page = 1, pageSize = 15): Promise<GroupAnimesRes> {
-  return request.get('/api/anime/recommend/group-animes', { params: { groupId, page, pageSize } })
+  return request.get('anime_recommend_groups', { groupId, page, pageSize })
 }
-// 获取动漫标签（支持传参：keyword, group, status）
+// 获取动漫标签（支持传参：keyword, group, status） - 使用加密API
 export function fetchAnimeTags(params?: {
   keyword?: string
   group?: string
   status?: number
 }): Promise<AnimeTagsRes> {
-  return request.get('/api/anime/category/tags', { params })
+  return request.get('anime_tags', params)
 }

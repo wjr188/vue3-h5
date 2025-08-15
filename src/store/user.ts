@@ -6,8 +6,14 @@ import {
   autoRegisterApi,
   fetchTaskStatusApi,
   claimTaskApi,
-  fetchLongVideoRemaining // 记得在 src/api/user.ts 里导出这个接口
+  fetchLongVideoRemaining,
 } from '@/api/user'
+
+function unwrap(resp: any) {
+  // 兼容多种返回：{data:{code,data}} / axios.data / 直接对象
+  const root = resp?.data ?? resp ?? {}
+  return root?.data ?? root
+}
 
 export const useUserStore = defineStore('user', {
   state: () => ({
@@ -20,7 +26,7 @@ export const useUserStore = defineStore('user', {
       inviteCount: 0,
       qrCodeUrl: '',
       account: '',
-      vip_status: 0,             // ← 只认这个，数字
+      vip_status: 0,
       vip_card_name: '',
       vip_expire_time: '',
       goldCoins: 0,
@@ -29,179 +35,199 @@ export const useUserStore = defineStore('user', {
       longVideoMax: 0,
       dyVideoUsed: 0,
       dyVideoMax: 0,
-      taskStatus: {},
+      taskStatus: {} as any,
       longVideoRemaining: 0,
-      can_view_vip_video: 0, // 新增
-      can_watch_coin: 0,     // 新增
+      can_view_vip_video: 0,
+      can_watch_coin: 0,
     },
-    userInfoLoaded: false, // ← 新增：是否已拉过 userInfo
+    userInfoLoaded: false,
+
+    // ↓↓↓ 新增：并发合并 + 过期判断
+    _inflight: null as Promise<any> | null,
+    _lastFetchedAt: 0,
   }),
+
   getters: {
-    uuid: (state) => state.userInfo?.uuid || '',
-    nickname: (state) => state.userInfo?.nickname || '',
-    avatar: (state) => state.userInfo?.avatar || '',
-    inviteCode: (state) => state.userInfo?.inviteCode || '',
-    inviteCount: (state) => state.userInfo?.inviteCount || 0,
-    qrCodeUrl: (state) =>
-      state.userInfo?.qrCodeUrl ||
+    uuid: (s) => s.userInfo?.uuid || '',
+    nickname: (s) => s.userInfo?.nickname || '',
+    avatar: (s) => s.userInfo?.avatar || '',
+    inviteCode: (s) => s.userInfo?.inviteCode || '',
+    inviteCount: (s) => s.userInfo?.inviteCount || 0,
+    qrCodeUrl: (s) =>
+      s.userInfo?.qrCodeUrl ||
       `https://api.qrserver.com/v1/create-qr-code/?data=https://example.com`,
-    isVIP: (state) => state.userInfo?.vip_status === 1,
-    vipCardName: (state) => state.userInfo?.vip_card_name || '',
-    vipExpireTime: (state) => state.userInfo?.vip_expire_time || '',
-    isBound: (state) => !!state.userInfo?.account,
-    points: (state) => state.userInfo?.points || 0,
-    longVideoRemaining: (state) => state.userInfo?.longVideoRemaining || 0,
+    isVIP: (s) => Number(s.userInfo?.vip_status) === 1,
+    vipCardName: (s) => s.userInfo?.vip_card_name || '',
+    vipExpireTime: (s) => s.userInfo?.vip_expire_time || '',
+    isBound: (s) => !!s.userInfo?.account,
+    points: (s) => s.userInfo?.points || 0,
+    longVideoRemaining: (s) => s.userInfo?.longVideoRemaining || 0,
+    goldCoins: (s) => Number(s.userInfo?.goldCoins || 0), // 便于组件直接取
   },
 
   actions: {
     async autoRegisterIfNeed() {
-  if (!this.token) {
-    const guestUuid = localStorage.getItem('guestUuid')
-    const res = guestUuid
-      ? await autoRegisterApi({ uuid: guestUuid })
-      : await autoRegisterApi()
-    console.log('autoRegister 返回:', res)
-    const token = res.token
-    const uuid = res.uuid
-    this.token = token
-    localStorage.setItem('token', token)
-    if (uuid) {
-      localStorage.setItem('guestUuid', uuid)
-    }
-    console.log('注册游客后 token:', this.token, 'localStorage token:', localStorage.getItem('token'))
-  }
-},
+      if (this.token) return
+      const guestUuid = localStorage.getItem('guestUuid')
+      const res = guestUuid
+        ? await autoRegisterApi({ uuid: guestUuid })
+        : await autoRegisterApi()
+      const data = unwrap(res)
+      const token = data.token
+      const uuid = data.uuid
+      if (token) {
+        this.token = token
+        localStorage.setItem('token', token)
+      }
+      if (uuid) localStorage.setItem('guestUuid', uuid)
+    },
+
+    /** 进入“我的”时用：按需刷新（默认 60s 之内不再打接口） */
+    async ensureFreshUserInfo(opts?: { maxAgeMs?: number; force?: boolean }) {
+      const maxAge = opts?.maxAgeMs ?? 60_000
+      if (opts?.force) return this.fetchUserInfo(true)
+      if (!this.userInfoLoaded) return this.fetchUserInfo(false)
+      const age = Date.now() - (this._lastFetchedAt || 0)
+      if (age > maxAge) return this.fetchUserInfo(false)
+      return this.userInfo
+    },
+
+    /** 公开的“强制刷新”别名（充值/购买成功后调用） */
+    async refreshUserInfo() {
+      return this.fetchUserInfo(true)
+    },
 
     /**
-     * 拉取用户信息，有缓存（默认只请求一次，强制刷新传 true）
+     * 拉用户信息（带并发合并 & 统一映射）
+     * @param force 强制刷新（忽略缓存）
      */
     async fetchUserInfo(force = false) {
-      if (this.userInfoLoaded && !force) {
-        // 已经拉过，且不强制刷新，直接返回
+      if (!this.token) await this.autoRegisterIfNeed()
+
+      // 并发合并：防抖多次同时调用
+      if (this._inflight) return this._inflight
+      if (this.userInfoLoaded && !force) return this.userInfo
+
+      this._inflight = (async () => {
+        const res = await fetchUserInfoApi()
+        const raw = unwrap(res)
+
+        const defaultInfo = {
+          uuid: '',
+          nickname: '',
+          avatar: '',
+          inviteCode: '',
+          inviteCount: 0,
+          qrCodeUrl: '',
+          account: '',
+          vip_status: 0,
+          vip_card_name: '',
+          vip_expire_time: '',
+          goldCoins: 0,
+          points: 0,
+          longVideoUsed: 0,
+          longVideoMax: 0,
+          dyVideoUsed: 0,
+          dyVideoMax: 0,
+          taskStatus: {},
+          longVideoRemaining: 0,
+          can_view_vip_video: 0,
+          can_watch_coin: 0,
+        }
+
+        // 统一字段映射
+        const mapped = {
+          ...raw,
+          goldCoins: Number(
+            raw.goldCoins ?? raw.coin ?? 0
+          ),
+          vip_status: Number(raw.vip_status ?? 0),
+          longVideoUsed: raw.long_video_used ?? raw.longVideoUsed ?? 0,
+          longVideoMax: raw.long_video_max ?? raw.longVideoMax ?? 0,
+          dyVideoUsed: raw.dy_video_used ?? raw.dyVideoUsed ?? 0,
+          dyVideoMax: raw.dy_video_max ?? raw.dyVideoMax ?? 0,
+          points: raw.points ?? 0,
+          longVideoRemaining:
+            raw.long_video_remaining ?? raw.longVideoRemaining ?? 0,
+          can_view_vip_video: raw.can_view_vip_video ?? 0,
+          can_watch_coin: raw.can_watch_coin ?? 0,
+        }
+
+        Object.assign(this.userInfo, defaultInfo, mapped)
+        this.userInfoLoaded = true
+        this._lastFetchedAt = Date.now()
+
+        // 持久化常用字段
+        if (this.userInfo.uuid) localStorage.setItem('uuid', this.userInfo.uuid)
+        if (this.userInfo.nickname) localStorage.setItem('nickname', this.userInfo.nickname)
+        if (this.userInfo.avatar) localStorage.setItem('avatar', this.userInfo.avatar)
+        if (this.userInfo.inviteCode) localStorage.setItem('inviteCode', this.userInfo.inviteCode)
+
         return this.userInfo
-      }
-      if (!this.token) {
-        await this.autoRegisterIfNeed()
-      }
-      const res = await fetchUserInfoApi()
-      // console.log('接口返回res', res)
+      })()
 
-      const defaultInfo = {
-        uuid: '',
-        nickname: '',
-        avatar: '',
-        inviteCode: '',
-        inviteCount: 0,
-        qrCodeUrl: '',
-        account: '',
-        vip_status: 0,
-        vip_card_name: '',
-        vip_expire_time: '',
-        goldCoins: 0,
-        points: 0,
-        longVideoUsed: 0,
-        longVideoMax: 0,
-        dyVideoUsed: 0,
-        dyVideoMax: 0,
-        taskStatus: {},
-        longVideoRemaining: 0,
-        can_view_vip_video: 0, // 新增
-        can_watch_coin: 0,     // 新增
+      try {
+        return await this._inflight
+      } finally {
+        this._inflight = null
       }
-
-      // 关键：coin -> goldCoins
-      const mappedRes = {
-        ...res,
-        goldCoins: typeof res.goldCoins === 'number'
-          ? res.goldCoins
-          : (typeof res.coin === 'number' ? res.coin : 0), // ★★ 就多了这一句 ★★
-        longVideoUsed: res.long_video_used ?? 0,
-        longVideoMax: res.long_video_max ?? 0,
-        dyVideoUsed: res.dy_video_used ?? 0,
-        dyVideoMax: res.dy_video_max ?? 0,
-        points: res.points ?? 0,
-        longVideoRemaining: res.long_video_remaining ?? 0,
-        can_view_vip_video: res.can_view_vip_video ?? 0, // 新增
-        can_watch_coin: res.can_watch_coin ?? 0,         // 新增
-      }
-
-      Object.assign(this.userInfo, defaultInfo, mappedRes)
-      this.userInfoLoaded = true // ← 设置已拉过
-
-      if (this.userInfo?.uuid) {
-        localStorage.setItem('uuid', this.userInfo.uuid)
-      }
-      if (this.userInfo?.nickname) {
-        localStorage.setItem('nickname', this.userInfo.nickname)
-      }
-      if (this.userInfo?.avatar) {
-        localStorage.setItem('avatar', this.userInfo.avatar)
-      }
-      if (this.userInfo?.inviteCode) {
-        localStorage.setItem('inviteCode', this.userInfo.inviteCode)
-      }
-
-      return this.userInfo
     },
 
     async fetchLongVideoRemaining() {
       if (!this.userInfo.uuid) return 0
       try {
         const res = await fetchLongVideoRemaining(this.userInfo.uuid)
-        if (res && typeof res.remaining === 'number') {
-          this.userInfo.longVideoRemaining = res.remaining
-          return res.remaining
-        }
-        this.userInfo.longVideoRemaining = 0
-        return 0
-      } catch (error) {
-        console.error('获取长视频剩余观看次数失败', error)
+        const data = unwrap(res)
+        const remain = Number(data.remaining ?? 0)
+        this.userInfo.longVideoRemaining = remain
+        return remain
+      } catch (e) {
+        console.error('获取长视频剩余观看次数失败', e)
         this.userInfo.longVideoRemaining = 0
         return 0
       }
     },
 
-    async register(account, password) {
-      if (!this.userInfo?.uuid) {
-        await this.fetchUserInfo()
-      }
+    async register(account: string, password: string) {
+      if (!this.userInfo?.uuid) await this.fetchUserInfo()
       const uuid = this.userInfo.uuid
       if (!uuid) throw new Error('当前没有uuid，无法绑定')
 
       const res = await registerApi({ account, password, uuid })
-      const token = res.token
+      const data = unwrap(res)
+      const token = data.token
       if (token) {
         this.token = token
         localStorage.setItem('token', token)
       }
-
-      this.userInfoLoaded = false // 注册后一定要强制刷新
+      this.userInfoLoaded = false
       await this.fetchUserInfo(true)
       return this.userInfo
     },
 
-    async login(account, password) {
+    async login(account: string, password: string) {
       const res = await loginApi({ account, password })
-      const token = res.token
+      const data = unwrap(res)
+      const token = data.token
       if (token) {
         this.token = token
         localStorage.setItem('token', token)
       }
-      this.userInfoLoaded = false // 登录后一定要强制刷新
+      this.userInfoLoaded = false
       await this.fetchUserInfo(true)
       return this.userInfo
     },
 
     async initUser() {
       await this.autoRegisterIfNeed()
-      this.userInfoLoaded = false // 启动时强制刷新
+      this.userInfoLoaded = false
       return await this.fetchUserInfo(true)
     },
 
     logout() {
       this.token = ''
       localStorage.removeItem('token')
-      this.userInfoLoaded = false // ← 登出重置
+      this.userInfoLoaded = false
       this.userInfo = {
         uuid: '',
         nickname: '',
@@ -224,64 +250,58 @@ export const useUserStore = defineStore('user', {
         can_view_vip_video: 0,
         can_watch_coin: 0,
       }
+
       const guestUuid = localStorage.getItem('guestUuid')
       if (guestUuid) {
-        autoRegisterApi({ uuid: guestUuid }).then((res) => {
-          const token = res.token
-          const uuid = res.uuid
+        autoRegisterApi({ uuid: guestUuid }).then(async (res) => {
+          const data = unwrap(res)
+          const token = data.token
+          const uuid = data.uuid
           if (token) {
             this.token = token
             localStorage.setItem('token', token)
-            if (uuid) {
-              localStorage.setItem('guestUuid', uuid)
-            }
+            if (uuid) localStorage.setItem('guestUuid', uuid)
             this.userInfoLoaded = false
-            this.fetchUserInfo(true)
+            await this.fetchUserInfo(true)
           }
         })
       } else {
-        this.autoRegisterIfNeed().then(() => {
+        this.autoRegisterIfNeed().then(async () => {
           this.userInfoLoaded = false
-          this.fetchUserInfo(true)
+          await this.fetchUserInfo(true)
         })
       }
     },
 
-    consumePoints(cost) {
-      if (this.userInfo.points < cost) {
-        throw new Error('积分不足')
-      }
+    consumePoints(cost: number) {
+      if (this.userInfo.points < cost) throw new Error('积分不足')
       this.userInfo.points -= cost
     },
 
-    addPoints(score) {
+    addPoints(score: number) {
       this.userInfo.points += score
     },
 
     async fetchTaskStatus() {
       const res = await fetchTaskStatusApi()
-      if (res?.data) {
-        this.userInfo.taskStatus = res.data
-        if (res.data.points !== undefined) {
-          this.userInfo.points = res.data.points
-        }
+      const data = unwrap(res)
+      if (data) {
+        this.userInfo.taskStatus = data
+        if (data.points !== undefined) this.userInfo.points = data.points
       }
-      return res
+      return data
     },
 
-    async claimTask(type) {
+    async claimTask(type: string) {
       const res = await claimTaskApi({ type })
-      if (res.code === 0) {
-        await this.fetchTaskStatus()
-      }
-      return res
+      const data = unwrap(res)
+      if (Number(data.code ?? 0) === 0) await this.fetchTaskStatus()
+      return data
     },
 
     canWatchLongVideo() {
       return this.userInfo.longVideoUsed < this.userInfo.longVideoMax
     },
-
-    
     consumeLongVideo() {
       if (this.userInfo.longVideoUsed < this.userInfo.longVideoMax) {
         this.userInfo.longVideoUsed++
@@ -293,7 +313,6 @@ export const useUserStore = defineStore('user', {
     canWatchDyVideo() {
       return this.userInfo.dyVideoUsed < this.userInfo.dyVideoMax
     },
-
     consumeDyVideo() {
       if (this.userInfo.dyVideoUsed < this.userInfo.dyVideoMax) {
         this.userInfo.dyVideoUsed++

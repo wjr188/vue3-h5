@@ -11,7 +11,7 @@ export const useDouyinTagsStore = defineStore('douyinTags', {
     async loadTags() {
       if (this.loaded) return
       const res = await fetchDouyinTags()
-      this.tags = res.list || []
+      this.tags = (res as any).list || []
       this.loaded = true
     }
   }

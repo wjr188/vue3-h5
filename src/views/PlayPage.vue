@@ -136,6 +136,7 @@ import { ref, onMounted, watch, nextTick, computed } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import VideoPlayer from '@/components/VideoPlayer.vue'
 import GuessYouLike from '@/components/GuessYouLike.vue'
+import CardCornerIcon from '@/components/CardCornerIcon.vue'
 import { useHistoryStore } from '@/store/useHistoryStore'
 import { showToast, showConfirmDialog } from 'vant'
 import { useUserStore } from '@/store/user'
@@ -143,13 +144,13 @@ import { useLongVideoStore } from '@/store/longVideoStore'
 import { encode, decode } from '@/utils/base62'
 import { trackLongVideoAction } from '@/api/longVideo.api'; // 导入 API 方法
 import { useDarknetStore } from '@/store/darknet.store'
-import { useAnimeStore } from '@/store/anime.store'
+import { unlockStarVideo, unlockAnimeVideo } from '@/api/unlock.api'
+import { likeContent, collectContent, unlikeContent, uncollectContent, getActionStatus } from '@/api/userAction.api'
 const route = useRoute()
 const router = useRouter()
 const historyStore = useHistoryStore()
 const userStore = useUserStore()
 const longVideoStore = useLongVideoStore()
-const animeStore = useAnimeStore()
 const isRemainingLoading = ref(false);
 // 播放器实例引用
 const playerRef = ref<InstanceType<typeof VideoPlayer> | null>(null)
@@ -174,10 +175,13 @@ const showCoinModal = ref(false)
 
 const userId = userStore.uuid
 
+// 点赞收藏状态
+const isLiked = ref(false);
+const isFavorited = ref(false);
+
 const type = computed(() => route.query.type || videoDetail.value?.type || 'long')
 
 async function loadVideoDetail() {
- 
   try {
     const videoId = Number(route.params.id);
     if (isNaN(videoId) || videoId <= 0) {
@@ -196,10 +200,9 @@ async function loadVideoDetail() {
     // 更新显示数据
     tags.value = videoDetail.value.tags || []
     views.value = videoDetail.value.play || 0
-    likeCount.value = videoDetail.value.like || 0; // 更新点赞数
+    likeCount.value = videoDetail.value.like || 0;
     favoriteCount.value = videoDetail.value.collect ?? videoDetail.value.collect_count ?? 0
 
-    // ❌ 不拉播放地址，videoUrl 不赋值
   } catch (err: any) {
     console.error('加载视频详情失败', err)
     showToast(err.message || '加载失败')
@@ -243,8 +246,9 @@ async function handlePlay() {
       return;
     }
 
-    // 普通用户有剩余次数，可以试看 VIP 或金币视频
-    if ((isVipVideo || isCoinVideo) && canTryWatch) {
+    // 【关键】试看次数作为万能钥匙 - 优先检查
+    if (canTryWatch) {
+      console.log('使用试看次数播放，剩余次数:', userStore.longVideoRemaining);
       if (!res || !res.url) {
         showToast('播放地址获取失败，请稍后重试');
         return;
@@ -268,16 +272,9 @@ async function handlePlay() {
       showCoinModal.value = true;
       return;
     }
-if (isVipVideo && !canViewVip && !canTryWatch) {
-      showVipModal.value = true;
-      return;
-    }
 
-if (isVipVideo && !canViewVip && !canTryWatch) {
-      showVipModal.value = true;
-      return;
-    }
-if (isVipVideo && !canViewVip && !canTryWatch) {
+    // VIP视频专门处理 - 保留一个就够了
+    if (isVipVideo && !canViewVip && !canTryWatch) {
       showVipModal.value = true;
       return;
     }
@@ -311,65 +308,117 @@ if (isVipVideo && !canViewVip && !canTryWatch) {
     showToast('播放失败，请稍后重试');
   }
 }
-function toggleLike() {
-  likeCount.value += isLiked.value ? -1 : 1;
-  isLiked.value = !isLiked.value;
-  showToast(isLiked.value ? '点赞成功' : '取消点赞');
-
-  // 添加点赞埋点
-  const videoId = Number(route.params.id);
-  if (!isNaN(videoId) && videoId > 0) {
-    const type = videoDetail.value?.type || 'long';
-    trackLongVideoAction({ id: videoId, type, action: isLiked.value ? 'like' : 'unlike' })
-      
-      
+// 获取内容类型 - 只处理长视频、暗网、动漫
+function getContentType(): string {
+  // 1. 优先使用路由查询参数中的 from 或 type
+  const routeFrom = route.query.from as string;
+  const routeType = route.query.type as string;
+  
+  // 2. 根据来源页面确定类型
+  if (routeFrom === 'darknet' || routeType === 'darknet') {
+    return 'darknet'; // Darknet 独立类型
   }
+  if (routeFrom === 'anime' || routeType === 'anime') {
+    return 'anime'; // 动漫保持独立类型
+  }
+  if (routeFrom === 'star' || routeType === 'star') return 'star';   // ★ 新增
+  
+  // 3. 根据视频详情的 type 字段判断
+  const videoType = videoDetail.value?.type;
+  if (videoType === 4 || videoType === 'darknet') {
+    return 'darknet'; // Darknet 独立类型
+  }
+  if (videoType === 'anime') {
+    return 'anime'; // 动漫保持独立类型
+  }
+  if (videoType === 8 || videoType === 'star') return 'star';          // ★ 新增
+  
+  // 4. 默认为长视频
+  return 'long_video';
 }
 
-const isLiked = ref(false);
+function toggleLike() {
+  const videoId = Number(route.params.id);
+  if (isNaN(videoId) || videoId <= 0) {
+    showToast('视频ID无效');
+    return;
+  }
+
+  const contentType = getContentType();
+  const currentLiked = isLiked.value;
+  
+  // 先更新UI，提供即时反馈
+  isLiked.value = !currentLiked;
+  likeCount.value += currentLiked ? -1 : 1;
+  
+  // 调用真实API
+  const apiCall = currentLiked ? unlikeContent(videoId, contentType) : likeContent(videoId, contentType);
+  
+  apiCall
+    .then(() => {
+      showToast(isLiked.value ? '点赞成功' : '取消点赞');
+    })
+    .catch((err) => {
+      console.error('点赞操作失败', err);
+      // 如果API调用失败，回滚UI状态
+      isLiked.value = currentLiked;
+      likeCount.value += currentLiked ? 1 : -1;
+      showToast('操作失败，请重试');
+    });
+
+  // 保留原有埋点逻辑 - 只记录操作行为，不区分取消
+  trackLongVideoAction({ 
+    id: videoId, 
+    type: contentType, 
+    action: 'like',
+    user_uuid: userStore.uuid // 可选：记录用户信息用于统计
+  })
+    .catch(err => console.error('点赞埋点触发失败', err));
+}
 
 function toggleFavorite() {
-  favoriteCount.value += isFavorited.value ? -1 : 1;
-  isFavorited.value = !isFavorited.value;
-  showToast(isFavorited.value ? '已加入收藏' : '取消收藏');
-
-  // 添加收藏埋点
   const videoId = Number(route.params.id);
-  if (!isNaN(videoId) && videoId > 0) {
-    const type = videoDetail.value?.type || 'long';
-    trackLongVideoAction({ id: videoId, type, action: isFavorited.value ? 'collect' : 'uncollect' })
-      
-      .catch(err => console.error('收藏埋点触发失败', err));
+  if (isNaN(videoId) || videoId <= 0) {
+    showToast('视频ID无效');
+    return;
   }
-}
 
-const isFavorited = ref(false);
+  const contentType = getContentType();
+  const currentFavorited = isFavorited.value;
+  
+  // 先更新UI，提供即时反馈
+  isFavorited.value = !currentFavorited;
+  favoriteCount.value += currentFavorited ? -1 : 1;
+  
+  // 调用真实API
+  const apiCall = currentFavorited ? uncollectContent(videoId, contentType) : collectContent(videoId, contentType);
+  
+  apiCall
+    .then(() => {
+      showToast(isFavorited.value ? '已加入收藏' : '取消收藏');
+    })
+    .catch((err) => {
+      console.error('收藏操作失败', err);
+      // 如果API调用失败，回滚UI状态
+      isFavorited.value = currentFavorited;
+      favoriteCount.value += currentFavorited ? 1 : -1;
+      showToast('操作失败，请重试');
+    });
+
+  // 保留原有埋点逻辑 - 只记录操作行为，不区分取消
+  trackLongVideoAction({ 
+    id: videoId, 
+    type: contentType, 
+    action: 'collect',
+    user_uuid: userStore.uuid // 可选：记录用户信息用于统计
+  })
+    .catch(err => console.error('收藏埋点触发失败', err));
+}
 
 function goShare() {
   router.push({ name: 'PromotionShare' });
 }
 function goBack() {
-  // 搜索页返回优先判断
-  if (sessionStorage.getItem('search-main-is-return')) {
-    const activeTab = sessionStorage.getItem('search-main-return-tab')
-    const currentTab = sessionStorage.getItem('search-main-return-type')
-    const keyword = sessionStorage.getItem('search-main-keyword')
-    const category = sessionStorage.getItem('search-main-category')
-    const tag = sessionStorage.getItem('search-main-tag')
-    const sort = sessionStorage.getItem('search-main-sort')
-    const scrollTop = sessionStorage.getItem('search-main-scroll-top')
-
-    router.replace({
-      name: 'SearchMainPage',
-      query: { activeTab, tabType: currentTab, keyword, category, tag, sort, scrollTop }
-    })
-
-    // 清理，防止重复跳转
-    sessionStorage.removeItem('search-main-is-return')
-    return
-  }
-
-  // 其他页面返回
   const from = sessionStorage.getItem('return-from')
   if (from === 'star') {
     sessionStorage.removeItem('return-from')
@@ -423,6 +472,7 @@ interface RecommendedItem {
   cover: string
   title: string
   tag: string
+  type?: string
 }
 function goToPlay(item: RecommendedItem) {
   if (!sessionStorage.getItem('first-play-from')) {
@@ -454,6 +504,60 @@ function formatViews(val: number | string): string {
   else return n.toString()
 }
 
+// 获取用户操作状态
+async function getUserActionStatus() {
+  try {
+    // 检查用户是否登录
+    if (!userStore.uuid) {
+      console.log('用户未登录，跳过获取操作状态');
+      return;
+    }
+    
+    const videoId = Number(route.params.id);
+    if (isNaN(videoId) || videoId <= 0) {
+      console.log('视频ID无效，跳过获取操作状态');
+      return;
+    }
+    
+    const contentType = getContentType();
+    console.log('获取用户操作状态 - videoId:', videoId, 'contentType:', contentType);
+    
+    const res = await getActionStatus(videoId, contentType);
+    console.log('获取用户操作状态响应:', res);
+    
+    // 兼容多种返回格式
+    let dataSource = null;
+    if (res && res.data) {
+      dataSource = res.data;
+    } else if (res && (res.isLiked !== undefined || res.liked !== undefined)) {
+      dataSource = res;
+    }
+    
+    if (dataSource) {
+      // 支持多种字段名格式：isLiked/isCollected, is_liked/is_collected, liked/collected
+      const isLikedField = dataSource.isLiked !== undefined ? dataSource.isLiked : 
+                          (dataSource.is_liked !== undefined ? dataSource.is_liked : dataSource.liked);
+      const isCollectedField = dataSource.isCollected !== undefined ? dataSource.isCollected : 
+                              (dataSource.is_collected !== undefined ? dataSource.is_collected : dataSource.collected);
+      
+      // 确保布尔值转换正确
+      const newIsLiked = Boolean(isLikedField);
+      const newIsFavorited = Boolean(isCollectedField);
+      
+      console.log('解析状态 - isLiked:', newIsLiked, 'isFavorited:', newIsFavorited);
+      console.log('原始字段值 - isLikedField:', isLikedField, 'isCollectedField:', isCollectedField);
+      
+      isLiked.value = newIsLiked;
+      isFavorited.value = newIsFavorited;
+    } else {
+      console.log('API返回数据格式不正确:', res);
+    }
+  } catch (err) {
+    console.error('获取用户操作状态失败', err);
+    // 获取状态失败不影响页面正常使用
+  }
+}
+
 const recommended = ref<RecommendedItem[]>(
   [
     {
@@ -474,27 +578,38 @@ const recommended = ref<RecommendedItem[]>(
 )
 
 onMounted(async () => {
- 
+  console.log('PlayPage mounted - 开始初始化');
+  
+  // 重置状态
+  isLiked.value = false;
+  isFavorited.value = false;
+  
   isRemainingLoading.value = true;
   await userStore.fetchUserInfo();
   const idStr = route.params.id as string;
   if (idStr) {
+    console.log('加载视频详情 - videoId:', idStr);
     await loadVideoDetail();
+    // 加载完视频详情后，获取用户操作状态
+    console.log('获取用户操作状态...');
+    await getUserActionStatus();
   }
-  // 等待剩余次数接口返回，确保用的是最新数据
- 
-if (videoDetail.value?.unlocked) {
-    // 已解锁，直接返回，不弹窗
+
+  if (videoDetail.value?.unlocked) {
+    isRemainingLoading.value = false;
     return;
   }
 
   const videoId = Number(route.params.id);
   if (!isNaN(videoId) && videoId > 0) {
-    // 进入详情页埋点
     const type = videoDetail.value?.type || 'long';
-    trackLongVideoAction({ id: videoId, type, action: 'view' })
-      
-      
+    trackLongVideoAction({ 
+      id: videoId, 
+      type, 
+      action: 'view',
+      user_uuid: userStore.uuid // 添加用户UUID，同时记录浏览记录
+    })
+      .catch(err => console.error('浏览埋点触发失败', err));
   }
   isRemainingLoading.value = false;
 
@@ -553,7 +668,7 @@ watch(() => userStore.uuid, (newUuid) => {
 }, { immediate: true })
 
 watch(videoUrl, (val) => {
-  
+  // 可以在这里添加必要的逻辑
 })
 
 // 监听路由ID变化，每次都重新load
@@ -561,7 +676,13 @@ watch(
   () => [route.params.id, route.query.type],
   async ([newId, newType]) => {
     if (newId) {
+      // 先重置点赞收藏状态
+      isLiked.value = false;
+      isFavorited.value = false;
+      
       await loadVideoDetail()
+      // 重新获取用户操作状态
+      await getUserActionStatus()
       videoUrl.value = null
     }
   },
@@ -572,9 +693,7 @@ const testId = 13
 const encoded = encode(testId)
 const decoded = decode(encoded)
 
-
 async function buySingleCoin() {
- 
   if (userStore.userInfo.goldCoins < videoDetail.value.coin) {
     showToast('金币余额不足，请先充值')
     return
@@ -582,14 +701,17 @@ async function buySingleCoin() {
   try {
     // 判断暗网视频（type为4或'darknet'）
     if (videoDetail.value?.type === 4 || type.value === 'darknet') {
-      
       const darknetStore = useDarknetStore()
       await darknetStore.unlockVideo(videoDetail.value.id)
-      } else if (videoDetail.value?.type === 5 || type.value === 'anime') {
-      // 动漫解锁接口
-      await animeStore.unlockAnimeVideoById(videoDetail.value.id);
+    } else if (
+      type.value === 'anime' ||
+      videoDetail.value?.type === 'anime' ||
+      videoDetail.value?.type === 5          // 兼容数值型
+    ) {
+      await unlockAnimeVideo({ video_id: videoDetail.value.id })  // ★ 新增动漫解锁
+    } else if (type.value === 'star' || videoDetail.value?.type === 'star' || videoDetail.value?.type === 8) {
+      await unlockStarVideo({ video_id: videoDetail.value.id })             // ★ 新增星际解锁
     } else {
-      console.log('调用长视频解锁接口')
       await longVideoStore.buySingleVideo({
         videoId: videoDetail.value.id,
         coin: videoDetail.value.coin,
@@ -911,6 +1033,12 @@ const showCoinCorner = computed(() =>
   margin-right: 0 !important;
   justify-content: flex-end;
   padding-right: 0;
+}
+.corner-absolute {
+  position: absolute;
+  right: 0;
+  top: 50%;
+  transform: translateY(-50%);
 }
 .coin-sheet-mask {
   position: fixed;

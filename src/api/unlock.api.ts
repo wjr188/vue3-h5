@@ -13,7 +13,7 @@ export interface UnlockedChaptersResult {
  * @returns Promise 解析为服务器返回的数据格式
  */
 export function unlockLongVideo(data: { video_id: number }): Promise<any> {
-  return request.post('/api/h5/unlock/long_video', data)
+  return request.post('unlock_long_video', data)
 }
 
 /**
@@ -21,7 +21,7 @@ export function unlockLongVideo(data: { video_id: number }): Promise<any> {
  * @param data 请求参数，包含 chapter_id
  */
 export function unlockComicChapter(data: { chapter_id: number }): Promise<any> {
-  return request.post('/api/h5/unlock/comic_chapter', data)
+  return request.post('unlock_comic_chapter', data)
 }
 
 /**
@@ -29,7 +29,7 @@ export function unlockComicChapter(data: { chapter_id: number }): Promise<any> {
  * @param params 查询参数，包含 comic_id
  */
 export function getUnlockedComicChapters(params: { comic_id: number }): Promise<UnlockedChaptersResult> {
-  return request.get('/api/h5/unlock/unlocked_chapters', { params })
+  return request.get('unlocked_chapters', params)
 }
 
 /**
@@ -37,7 +37,7 @@ export function getUnlockedComicChapters(params: { comic_id: number }): Promise<
  * @param data 请求参数，包含 chapter_id
  */
 export function unlockNovelChapter(data: { chapter_id: number }): Promise<any> {
-  return request.post('/api/h5/unlock/novel_chapter', data)
+  return request.post('unlock_novel_chapter', data)
 }
 
 /**
@@ -45,7 +45,7 @@ export function unlockNovelChapter(data: { chapter_id: number }): Promise<any> {
  * @param params 查询参数，包含 novel_id
  */
 export function getUnlockedNovelChapters(params: { novel_id: number }): Promise<UnlockedChaptersResult> {
-  return request.get('/api/h5/unlock/unlocked_novel_chapters', { params })
+  return request.get('unlocked_novel_chapters', params)
 }
 
 /**
@@ -53,7 +53,7 @@ export function getUnlockedNovelChapters(params: { novel_id: number }): Promise<
  * @param data 请求参数，包含 chapter_id
  */
 export function unlockAudioNovelChapter(data: { chapter_id: number }): Promise<any> {
-  return request.post('/api/h5/unlock/audio_novel_chapter', data)
+  return request.post('unlock_audio_novel_chapter', data)
 }
 
 /**
@@ -61,7 +61,7 @@ export function unlockAudioNovelChapter(data: { chapter_id: number }): Promise<a
  * @param params 查询参数，包含 audio_novel_id
  */
 export function getUnlockedAudioNovelChapters(params: { audio_novel_id: number }): Promise<UnlockedChaptersResult> {
-  return request.get('/api/h5/unlock/unlocked_audio_novel_chapters', { params })
+  return request.get('unlocked_audio_novel_chapters', params)
 }
 
 /**
@@ -69,7 +69,7 @@ export function getUnlockedAudioNovelChapters(params: { audio_novel_id: number }
  * @param data 请求参数，包含 comic_id
  */
 export function unlockComicWhole(data: { comic_id: number }): Promise<any> {
-  return request.post('/api/h5/unlock/comic_whole', data)
+  return request.post('unlock_comic_whole', data)
 }
 
 /**
@@ -77,7 +77,7 @@ export function unlockComicWhole(data: { comic_id: number }): Promise<any> {
  * @param data 请求参数，包含 novel_id
  */
 export function unlockNovelWhole(data: { novel_id: number }): Promise<any> {
-  return request.post('/api/h5/unlock/novel_whole', data)
+  return request.post('unlock_novel_whole', data)
 }
 
 /**
@@ -85,7 +85,7 @@ export function unlockNovelWhole(data: { novel_id: number }): Promise<any> {
  * @param data 请求参数，包含 video_id
  */
 export function unlockDouyinVideo(data: { video_id: number }): Promise<any> {
-  return request.post('/api/h5/unlock/douyin_video', data)
+  return request.post('unlock_douyin_video', data)
 }
 
 /**
@@ -93,7 +93,7 @@ export function unlockDouyinVideo(data: { video_id: number }): Promise<any> {
  * @param data 请求参数，包含 video_id
  */
 export function unlockDarknetVideo(data: { video_id: number }): Promise<any> {
-  return request.post('/api/h5/unlock/darknet_video', data)
+  return request.post('unlock_darknet_video', data)
 }
 
 /**
@@ -101,5 +101,13 @@ export function unlockDarknetVideo(data: { video_id: number }): Promise<any> {
  * @param data 请求参数，包含 video_id
  */
 export function unlockAnimeVideo(data: { video_id: number }): Promise<any> {
-  return request.post('/api/h5/unlock/anime_video', data)
+  return request.post('unlock_anime_video', data)
+}
+
+/**
+ * 解锁 Star/OnlyFans 视频
+ * @param data 请求参数，包含 video_id
+ */
+export function unlockStarVideo(data: { video_id: number }): Promise<any> {
+  return request.post('unlock_star_video', data)
 }

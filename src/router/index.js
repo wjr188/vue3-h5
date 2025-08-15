@@ -11,6 +11,7 @@ const Profile = () => import('../views/Profile.vue')
 const PlayPage = () => import('../views/PlayPage.vue')
 const PlayPageTikTok = () => import('../views/PlayPageTikTok.vue')
 const SearchPopup = () => import('../pages/SearchPopup.vue')
+const SearchPage = () => import('../views/SearchPage.vue')
 const ListPage = () => import('../views/ListPage.vue')
 const Vip = () => import('../views/Vip.vue')
 const StarDetail = () => import('../views/StarDetail.vue')
@@ -57,6 +58,7 @@ const routes = [
   { path: '/play/:id', name: 'PlayPage', component: PlayPage, props: true },
   { path: '/play-tiktok', name: 'PlayPageTikTok', component: PlayPageTikTok },
   { path: '/search-popup', name: 'SearchPopup', component: SearchPopup },
+  { path: '/search', name: 'SearchPage', component: SearchPage },
   { path: '/list', name: 'ListPage', component: ListPage },
   { path: '/vip', name: 'Vip', component: Vip },
   { path: '/star-detail/:id', name: 'StarDetail', component: StarDetail, props: true },

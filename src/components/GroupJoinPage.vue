@@ -119,25 +119,55 @@
   </div>
 </template>
 <script setup lang="ts">
+import { computed, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { showToast } from 'vant'
+import { useGroupLinksStore } from '@/store/groupLinks' // 用你刚建的 store
 
 // 路由
 const router = useRouter()
+function goBack(){ router.back() }
 
-function goBack(): void {
-  router.back()
-}
+// 你原来的展示类型
+interface GroupItem { icon: string; name: string; desc: string; url?: string }
 
-// Group类型
-interface GroupItem {
-  icon: string
-  name: string
-  desc: string
-  url?: string
-}
+// 拉取后端
+const gl = useGroupLinksStore()
+onMounted(() => { gl.load() })
 
-// 点击按钮
+// 从后端 sections 里取第一个链接（只要 url）
+const firstUrl = (items: any[] = []) => items?.[0]?.action?.value as string | undefined
+
+// 用后端返回的 url 回填到你原来的四个分组里（其余字段保持不变）
+const officialGroups = computed<GroupItem[]>(() => [{
+  icon: '/icons/telegram.svg',
+  name: '官方福利群',
+  desc: '官方福利群',
+  url: firstUrl(gl.officialGroups),
+}])
+
+const businessGroups = computed<GroupItem[]>(() => [{
+  icon: '/icons/telegram.svg',
+  name: '商务合作',
+  desc: '推广商务合作洽谈',
+  url: firstUrl(gl.businessGroups),
+}])
+
+const adGroups = computed<GroupItem[]>(() => [{
+  icon: '/icons/telegram.svg',
+  name: '广告合作',
+  desc: '广告商务合作洽谈',
+  url: firstUrl(gl.adGroups),
+}])
+
+const downloadTools = computed<GroupItem[]>(() => [{
+  icon: '/icons/telegram.svg',
+  name: 'TG',
+  desc: 'tg聊天 地址 https://telegram.org',
+  url: firstUrl(gl.downloadTools) || 'https://telegram.org', // 没配就用默认
+}])
+
+// 点击按钮（保持不变）
 function handleJoin(item: GroupItem): void {
   if (item.url) {
     window.open(item.url, '_blank')
@@ -145,46 +175,8 @@ function handleJoin(item: GroupItem): void {
     showToast(`即将打开：${item.name}`)
   }
 }
-
-// 官方交流群
-const officialGroups: GroupItem[] = [
-  {
-    icon: '/icons/telegram.svg',
-    name: '官方福利群',
-    desc: '官方福利群',
-    url: 'https://t.me/+iOUCu9EkBkE4MTQ9'
-  }
-]
-
-// 推广商务合作
-const businessGroups: GroupItem[] = [
-  {
-    icon: '/icons/telegram.svg',
-    name: '商务合作',
-    desc: '推广商务合作洽谈'
-  }
-]
-
-// 广告商务合作
-const adGroups: GroupItem[] = [
-  {
-    icon: '/icons/telegram.svg',
-    name: '广告合作',
-    desc: '广告商务合作洽谈',
-    url: 'https://t.me/Holly577'
-  }
-]
-
-// 下载工具
-const downloadTools: GroupItem[] = [
-  {
-    icon: '/icons/telegram.svg',
-    name: 'TG',
-    desc: 'tg聊天 地址 https://telegram.org',
-    url: 'https://telegram.org'
-  }
-]
 </script>
+
 <style scoped>
 .group-page {
   background: #f8f8f8;

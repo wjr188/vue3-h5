@@ -46,7 +46,7 @@
       <div class="collect-badge">
         <div class="badge-content">
           <img src="/icons/collect.svg" class="badge-icon" />
-          <div class="badge-text">{{ formatW(isNovel ? novel.collects : comic.collects) }}人收藏</div>
+          <div class="badge-text">{{ formatW(collectCount || (isNovel ? novel.collects : comic.collects)) }}人收藏</div>
         </div>
       </div>
     </div>
@@ -149,8 +149,8 @@
     <!-- 底部按钮 -->
     <div class="bottom-bar">
   <button class="bottom-left-btn" @click="handleBottomCollectClick">
-    <img src="/icons/star2.svg" class="bottom-icon-large" />
-    <div class="bottom-icon-text">收藏</div>
+    <img :src="isCollected ? '/icons/star7.svg' : '/icons/star2.svg'" class="bottom-icon-large" />
+    <div class="bottom-icon-text">{{ isCollected ? '已收藏' : '收藏' }}</div>
   </button>
      <!-- 只动这一行 -->
 <button class="bottom-read-btn-big"
@@ -276,6 +276,7 @@ import { useNovelCategoryStore } from '@/store/novelStore'
 import { useUserStore } from '@/store/user'
 import { showToast } from 'vant'
 import { trackLongVideoAction } from '@/api/longVideo.api'
+import { collectContent, uncollectContent, getActionStatus } from '@/api/userAction.api'
 
 
 // 类型判定
@@ -309,6 +310,11 @@ const { novelDetail, novelChapterList } = storeToRefs(novelStore)
 // 用户store
 const userStore = useUserStore()
 const { userInfo } = storeToRefs(userStore)
+
+// 添加收藏状态管理
+const isCollected = ref(false)
+const collectCount = ref(0)
+
 const firstNovelChapter = computed(() => {
   // 优先全量章节（drawer 拉了全量就有）
   if (isNovel.value && Array.isArray(novelChapterList.value?.list) && novelChapterList.value.list.length > 0) {
@@ -367,6 +373,30 @@ const discountedPrice = computed(() => {
   return Number((coin * userDiscount.value).toFixed(2))
 })
 
+// 加载收藏状态
+async function loadCollectStatus() {
+  if (!userStore.uuid) {
+    isCollected.value = false
+    collectCount.value = 0
+    return
+  }
+  
+  try {
+    const contentType = isNovel.value ? 'novel' : 'comic'
+    const contentId = Number(props.id)
+    
+    const status = await getActionStatus(contentId, contentType)
+    isCollected.value = status.isCollected || false
+    collectCount.value = status.collect_count || 0
+    
+    console.log('收藏状态加载成功:', { isCollected: isCollected.value, collectCount: collectCount.value })
+  } catch (error) {
+    console.error('加载收藏状态失败:', error)
+    isCollected.value = false
+    collectCount.value = 0
+  }
+}
+
 // 拉详情和预览章节（分漫画/小说）
 async function fetchDetailAndPreview(id: string | number) {
   if (isNovel.value) {
@@ -383,6 +413,7 @@ async function fetchDetailAndPreview(id: string | number) {
       tags: Array.isArray(detail.tags) ? detail.tags : [],
       category_id: detail.category_id, // 保证有 category_id 字段
     }
+    
     // 新增：拉猜你喜欢
     if (novel.value.category_id) {
       await novelStore.loadGuessLikeNovels(novel.value.category_id, id)
@@ -401,6 +432,7 @@ async function fetchDetailAndPreview(id: string | number) {
       is_serializing: Number(comicDetail.value.is_serializing) || 0,
       category_id: comicDetail.value.category_id,
     }
+    
     if (comic.value.category_id) {
       await comicStore.loadGuessLikeList(comic.value.category_id, props.id)
     }
@@ -414,6 +446,9 @@ onMounted(async () => {
   await fetchDetailAndPreview(props.id)
   await userStore.fetchUserInfo(true)
 
+  // 加载收藏状态
+  await loadCollectStatus()
+
   if (isNovel.value) {
     await novelStore.loadUnlockedNovelChapters(props.id)
   } else {
@@ -422,12 +457,19 @@ onMounted(async () => {
 
   const stored = localStorage.getItem(`lastReadChapter_${props.id}`)
   if (stored) lastReadChapterId.value = parseInt(stored, 10)
+
+  // 新增：详情页浏览埋点
+  trackBrowseView()
 })
 
 watch(() => props.id, async (newId) => {
   comicStore.clearCurrentState()
   novelStore.clearCurrentState?.()
   await fetchDetailAndPreview(newId)
+  
+  // 重新加载收藏状态
+  await loadCollectStatus()
+  
   if (isNovel.value) {
     await novelStore.loadUnlockedNovelChapters(newId)
   } else {
@@ -436,6 +478,9 @@ watch(() => props.id, async (newId) => {
   lastReadChapterId.value = null
   const stored = localStorage.getItem(`lastReadChapter_${newId}`)
   if (stored) lastReadChapterId.value = parseInt(stored, 10)
+
+  // 新增：切换详情后再次浏览埋点
+  trackBrowseView()
 })
 
 // 目录渲染
@@ -801,16 +846,55 @@ async function unlockAllChapters() {
   purchaseSheetType.value = 'whole'
   purchaseSheet.value = true
 }
-function handleBottomCollectClick() {
+async function handleBottomCollectClick() {
+  if (!userStore.uuid) {
+    showToast('请先登录')
+    return
+  }
+  
+  // 立即更新UI状态 - 真正的抖音逻辑
+  const originalCollected = isCollected.value
+  const originalCount = collectCount.value
+  
+  // 先更新UI
+  isCollected.value = !originalCollected
+  collectCount.value = originalCollected ? originalCount - 1 : originalCount + 1
+  
+  showToast(isCollected.value ? '收藏成功' : '取消收藏')
+  
+  try {
+    const contentType = isNovel.value ? 'novel' : 'comic'
+    const contentId = Number(props.id)
+    
+    // 根据新状态调用对应API
+    const response = isCollected.value 
+      ? await collectContent(contentId, contentType)
+      : await uncollectContent(contentId, contentType)
+    
+    if (response && response.data) {
+      // 用服务器返回的真实数据更新
+      isCollected.value = response.data.collected || false
+      collectCount.value = response.data.collect_count || 0
+    } else {
+      // 如果API没有返回准确数据，重新获取状态
+      await loadCollectStatus()
+    }
+  } catch (error) {
+    console.error('收藏操作失败:', error)
+    // 如果API调用失败，回滚状态
+    isCollected.value = originalCollected
+    collectCount.value = originalCount
+    showToast('操作失败，请重试')
+  }
+  
+  // 保留原有的埋点逻辑
   if (isComic.value) {
     trackLongVideoAction({
       id: comic.value.id,
       type: 'comic',
       action: 'collect'
     });
-    showToast('收藏成功');
   }
-  // 你可以加自己的收藏业务逻辑，比如切换收藏状态
 }
 
 function handleLikeClick() {
@@ -823,6 +907,21 @@ function handleLikeClick() {
     showToast('点赞成功');
   }
   // 如果还有别的业务，可以继续加
+}
+
+// 新增：进入详情页浏览记录埋点（仅记录浏览记录，不改其他逻辑）
+function trackBrowseView() {
+  const id = Number(props.id)
+  if (!id) return
+  const type = isNovel.value ? 'novel' : 'comic'
+  const payload: any = { id, type, action: 'view' }
+  const uuid = (userStore as any)?.uuid
+  if (uuid) payload.user_uuid = uuid
+  try {
+    trackLongVideoAction(payload)
+  } catch (e) {
+    console.error('浏览埋点失败:', e)
+  }
 }
 
 </script>

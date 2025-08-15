@@ -9,23 +9,27 @@
     <!-- 图片滑动区域 -->
     <div class="image-swiper" @scroll.passive="onScroll" ref="scrollContainer">
       <div
-  v-for="(img, index) in visibleImages"
-  :key="index"
-  class="image-wrapper"
-  :class="{ locked: index > 1 }"
->
-  <img v-lazy="img" class="full-image" />
-  <div class="lock-overlay" v-if="index > 1">
-    <div class="vip-button" @click.stop="showModal = true">开通VIP观看完整图集</div>
-  </div>
-</div>
+        v-for="(img, index) in displayImages"
+        :key="index"
+        class="image-wrapper"
+        :class="{ locked: index > 1 && !isVip }"
+      >
+        <img v-lazy="img" class="full-image" />
+        <!-- ✅ 前端VIP限制：前2张免费，后面需要VIP -->
+        <div class="lock-overlay" v-if="index > 1 && !isVip">
+          <div class="vip-button" @click.stop="showModal = true">
+            开通VIP观看完整图集
+          </div>
+        </div>
+      </div>
+      
       <!-- loading部分 -->
-      <div class="loading-tip" v-if="loading">
+      <div class="loading-tip" v-if="isLoading">
         <img src="/icons/loading.svg" class="loading-icon" />
         客官别走，妾身马上就好~
       </div>
 
-      <div class="end-tip" v-if="!loading && noMore">
+      <div class="end-tip" v-if="!isLoading && noMore">
         客官，妾身被你弄高潮了，扛不住了 ~
       </div>
     </div>
@@ -33,8 +37,12 @@
     <!-- 弹窗 -->
     <div v-if="showModal" class="modal-mask" @click.self="showModal = false">
       <div class="modal-box">
-        <div class="modal-title">温馨提示</div>
-        <div class="modal-text">开通VIP可无限观看色图<br />邀请好友注册立刻送3天VIP</div>
+        <div class="modal-title">VIP专享内容</div>
+        <div class="modal-text">
+          开通VIP可无限观看色图<br />
+          还有{{ lockedCount }}张图片需要VIP解锁<br />
+          邀请好友注册立刻送3天VIP
+        </div>
         <div class="modal-actions">
           <button class="btn orange" @click="goToPromotionShare">邀请好友</button>
           <button class="btn red" @click="goToVip">开通会员</button>
@@ -46,109 +54,169 @@
     <div class="bottom-bar">
       <div class="icon-btn">
         <img src="/icons/like1.svg" />
-        <span>{{ likeCount }}</span>
+        <span>{{ formattedLikeCount }}</span>
       </div>
       <div class="icon-btn">
         <img src="/icons/star.svg" />
-        <span>{{ starCount }}</span>
+        <span>{{ formattedStarCount }}</span>
       </div>
       <div class="icon-btn" @click="goToPromotionShare">
         <img src="/icons/share2.svg" />
         <span>分享</span>
       </div>
 
-      <div class="index-text">{{ currentIndex + 1 }}/{{ album.images.length }}</div>
+      <div class="index-text">{{ currentIndex + 1 }}/{{ totalImages }}</div>
     </div>
   </div>
 </template>
+
 <script setup lang="ts">
 import { useRoute, useRouter } from 'vue-router'
-import { computed, ref, onMounted, type Ref } from 'vue'
+import { computed, ref, onMounted } from 'vue'
+import { useOnlyfansH5Store } from '@/store/onlyfansH5'
+import { useUserStore } from '@/store/user' // ✅ 引入 user store
 
 const route = useRoute()
 const router = useRouter()
+const onlyfansStore = useOnlyfansH5Store()
+const userStore = useUserStore() // ✅ 使用 user store
 
 interface Album {
+  id?: string | number
   title?: string
-  images: string[]
+  images?: string[]
 }
+
+interface Star {
+  id?: string | number
+  name?: string
+  avatar?: string
+}
+
 interface Data {
   album: Album
+  star?: Star
   likes?: number
   favs?: number
-  initialIndex?: number
+  index?: number
+  images?: string[] // 从 StarImageDetail 传递过来的图片列表
 }
 
 const data = computed<Data>(() => {
   try {
-    return route.params.data ? JSON.parse(decodeURIComponent(route.params.data as string)) : { album: { images: [] } }
+    return route.params.data ? JSON.parse(decodeURIComponent(route.params.data as string)) : { album: {} }
   } catch (error) {
     console.error('Error parsing data:', error)
-    return { album: { images: [] } }
+    return { album: {} }
   }
 })
 
-const album = computed<Album>(() => data.value.album || { images: [] })
-const likeCount = computed<number>(() => data.value.likes || 0)
-const starCount = computed<number>(() => data.value.favs || 0)
-
-const scrollContainer = ref<HTMLDivElement | null>(null)
+const album = computed<Album>(() => data.value.album || {})
+const star = computed<Star>(() => data.value.star || {})
 const showModal = ref(false)
-const loading = ref(false)
-const noMore = ref(false)
-const pageSize = Math.ceil(window.innerHeight / 130 * 3 / 2)
-const loadedCount = ref(0)
-const visibleImages = ref<string[]>([])
-const currentIndex = ref<number>(data.value.initialIndex || 0)
+const currentIndex = ref<number>(data.value.index || 0)
+const scrollContainer = ref<HTMLDivElement | null>(null)
 
-function loadMore() {
-  if (loading.value || noMore.value) return
-  loading.value = true
+// ✅ 使用 store 数据或传递的 images 数据
+const displayImages = computed(() => {
+  // 优先使用传递过来的图片数据
+  if (data.value.images && data.value.images.length > 0) {
+    return data.value.images
+  }
+  // 回退使用 store 中的数据
+  if (onlyfansStore.mediaImageUrls.length > 0) {
+    return onlyfansStore.mediaImageUrls
+  }
+  // 最后回退使用 album.images
+  return album.value.images || []
+})
 
-  setTimeout(() => {
-    const total = album.value.images.length
-    const next = loadedCount.value + pageSize
-    visibleImages.value = album.value.images.slice(0, Math.min(next, total))
-    loadedCount.value = next
-    if (loadedCount.value >= total) noMore.value = true
-    loading.value = false
-  }, 800)
+const isLoading = computed(() => onlyfansStore.mediaImageLoading)
+const noMore = computed(() => onlyfansStore.mediaImageNoMore)
+
+// ✅ 从 user store 获取真实的 VIP 状态
+const isVip = computed(() => userStore.isVIP)
+
+// ✅ 计算锁定的图片数量
+const lockedCount = computed(() => {
+  if (isVip.value) return 0 // VIP用户没有锁定图片
+  const total = displayImages.value.length
+  return Math.max(0, total - 2) // 前2张免费，其余需要VIP
+})
+
+const totalImages = computed(() => displayImages.value.length)
+
+// ✅ 格式化数字显示
+const formatWk = (num: number | undefined): string => {
+  if (!num) return '0.00'
+  if (num >= 10000) return (num / 10000).toFixed(2) + 'w'
+  if (num >= 1000) return (num / 1000).toFixed(2) + 'k'
+  return num.toFixed(2)
 }
+
+// ✅ 格式化点赞收藏数
+const formattedLikeCount = computed(() => {
+  const storeCount = onlyfansStore.mediaImages.pagination.like_count
+  const count = typeof storeCount === 'number' ? storeCount : (data.value.likes || 0)
+  return formatWk(count)
+})
+
+const formattedStarCount = computed(() => {
+  const storeCount = onlyfansStore.mediaImages.pagination.favorite_count
+  const count = typeof storeCount === 'number' ? storeCount : (data.value.favs || 0)
+  return formatWk(count)
+})
 
 function onScroll() {
   const container = scrollContainer.value
-  if (!container) return
-  const bottom = container.scrollTop + container.clientHeight
-  if (bottom + 100 >= container.scrollHeight) {
-    loadMore()
-  }
-
-  // 滑动时同步 currentIndex
-  const total = album.value.images.length
-  if (total > 0) {
-    const perImgHeight = container.scrollHeight / total
-    const newIndex = Math.floor(container.scrollTop / perImgHeight)
-    if (currentIndex.value !== newIndex) {
-      currentIndex.value = newIndex
-    }
-  }
+  if (!container || !displayImages.value.length) return
+  
+  const perImgHeight = container.scrollHeight / displayImages.value.length
+  const newIndex = Math.floor(container.scrollTop / perImgHeight)
+  currentIndex.value = Math.max(0, Math.min(newIndex, displayImages.value.length - 1))
 }
 
 function goBack() {
   router.back()
 }
+
 function goToVip() {
   router.push({ name: 'Vip' })
 }
+
 function goToPromotionShare() {
   router.push({ name: 'PromotionShare' })
 }
 
-onMounted(() => {
-  loadMore()
-  loadMore() // 首屏多加载一屏
+// ✅ 在组件初始化时确保用户信息已加载
+onMounted(async () => {
+  // 确保用户信息已加载
+  if (!userStore.userInfoLoaded) {
+    try {
+      await userStore.fetchUserInfo()
+    } catch (error) {
+      console.error('获取用户信息失败:', error)
+    }
+  }
+
+  console.log('📱 FullImageViewer 初始化:', {
+    album_id: album.value.id,
+    图片数量: displayImages.value.length,
+    当前索引: currentIndex.value,
+    VIP状态: isVip.value,
+    VIP过期时间: userStore.vipExpireTime,
+    锁定数量: lockedCount.value
+  })
+  
+  // 如果有初始索引，滚动到对应位置
+  if (data.value.index && scrollContainer.value) {
+    const targetTop = (data.value.index * scrollContainer.value.scrollHeight) / displayImages.value.length
+    scrollContainer.value.scrollTo({ top: targetTop, behavior: 'smooth' })
+  }
 })
 </script>
+
+<!-- 样式保持不变 -->
 <style scoped>
 .full-image-viewer {
   background: #fff;
@@ -159,6 +227,7 @@ onMounted(() => {
   overflow: hidden;
   font-size: 4vw;
 }
+
 .top-bar {
   display: flex;
   align-items: center;
@@ -172,11 +241,13 @@ onMounted(() => {
   font-size: 4vw;
   font-weight: bold;
 }
+
 .back-icon {
   width: 5vw;
   height: 5vw;
   margin-right: 2vw;
 }
+
 .title {
   flex: 1;
   text-align: center;
@@ -199,6 +270,7 @@ onMounted(() => {
   mask-image: linear-gradient(black 100%, black 100%);
   padding-bottom: 3vw;
 }
+
 .image-swiper::-webkit-scrollbar {
   display: none !important;
   width: 0 !important;
@@ -209,11 +281,13 @@ onMounted(() => {
 .image-wrapper {
   position: relative;
 }
+
 .full-image {
   width: 100vw;
   display: block;
   object-fit: contain;
 }
+
 .lock-overlay {
   position: absolute;
   top: 0;
@@ -225,6 +299,7 @@ onMounted(() => {
   justify-content: center;
   align-items: center;
 }
+
 .vip-button {
   background: #d80000;
   color: #fff;
@@ -247,15 +322,18 @@ onMounted(() => {
   padding-left: 5vw;
   gap: 8vw;
 }
+
 .icon-btn {
   display: flex;
   align-items: center;
   gap: 2vw;
 }
+
 .icon-btn img {
   width: 4.5vw;
   height: 4.5vw;
 }
+
 .index-text {
   margin-left: auto;
   margin-right: 4vw;
@@ -272,12 +350,14 @@ onMounted(() => {
   font-size: 3.2vw;
   margin: 5vw 0;
 }
+
 .loading-icon {
   width: 7vw;
   height: 7vw;
   margin-bottom: 2vw;
   animation: spin 1s linear infinite;
 }
+
 @keyframes spin {
   0% { transform: rotate(0); }
   100% { transform: rotate(360deg); }
@@ -300,6 +380,7 @@ onMounted(() => {
   align-items: center;
   z-index: 9999;
 }
+
 .modal-box {
   background: #fff;
   border-radius: 4vw;
@@ -309,12 +390,14 @@ onMounted(() => {
   text-align: center;
   box-shadow: 0 2vw 4vw rgba(0,0,0,0.15);
 }
+
 .modal-title {
   font-size: 5vw;
   font-weight: bold;
   color: #333;
   margin-bottom: 3vw;
 }
+
 .modal-text {
   font-size: 4vw;
   color: #333;
@@ -324,11 +407,13 @@ onMounted(() => {
   white-space: pre-line;
   text-align: center;
 }
+
 .modal-actions {
   display: flex;
   justify-content: space-around;
   gap: 3vw;
 }
+
 .btn {
   padding: 2vw 6vw;
   font-size: 4vw;
@@ -337,17 +422,21 @@ onMounted(() => {
   cursor: pointer;
   transition: background 0.3s;
 }
+
 .orange {
   background-color: #FFA500;
   color: white;
 }
+
 .orange:hover {
   background-color: #FF7F00;
 }
+
 .red {
   background: linear-gradient(45deg, #FF416C, #FF4B2B);
   color: white;
 }
+
 .red:hover {
   background: linear-gradient(45deg, #FF5E6C, #FF5733);
 }

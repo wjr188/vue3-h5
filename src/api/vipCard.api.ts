@@ -22,7 +22,7 @@ export function fetchVipCardList(params: { page?: number; pageSize?: number }) {
     total: number;
     page: number;
     pageSize: number;
-  }>('/api/admin/member-card', { params })
+  }>('vip_card_list', params)
 }
 
 /**
@@ -39,7 +39,7 @@ export function saveVipCard(data: {
   can_watch_coin?: number;
   can_view_vip_video?: number;
 }) {
-  return request.post('/api/admin/member-card', data)
+  return request.post('vip_card_save', data)
 }
 
 /**
@@ -59,7 +59,7 @@ export function updateVipCard(
     can_view_vip_video?: number;
   }
 ) {
-  return request.put(`/api/admin/member-card/${id}`, data)
+  return request.put('vip_card_update', { id, ...data })
 }
 
 /**
@@ -67,7 +67,7 @@ export function updateVipCard(
  * PATCH /api/admin/member-card/:id/status
  */
 export function toggleVipCardStatus(id: number, status: 'ENABLED' | 'DISABLED') {
-  return request.patch(`/api/admin/member-card/${id}/status`, { status })
+  return request.patch('vip_card_toggle_status', { id, status })
 }
 
 /**
@@ -75,7 +75,7 @@ export function toggleVipCardStatus(id: number, status: 'ENABLED' | 'DISABLED') 
  * DELETE /api/admin/member-card/:id
  */
 export function deleteVipCard(id: number) {
-  return request.delete(`/api/admin/member-card/${id}`)
+  return request.delete('vip_card_delete', { id })
 }
 
 /**
@@ -101,8 +101,9 @@ export function fetchAllVipCardsWithDetail() {
     total: number;
     page: number;
     pageSize: number;
-  }>('/api/admin/member-card', {
-    params: { page: 1, pageSize: 100 }
+  }>('vip_card_list', {
+    page: 1, 
+    pageSize: 100
   })
 }
 
@@ -120,5 +121,5 @@ export function fetchAllVipCardsSimple() {
       durationUnit: string;
       can_watch_coin: number;
     }[]
-  >('/api/admin/member-card/all')
+  >('vip_card_all')
 }

@@ -243,6 +243,9 @@ import { useRouter, useRoute } from 'vue-router'
 import { showToast } from 'vant'
 import { useAudioNovelCategoryStore } from '@/store/audio-novel.store'
 import { useUserStore } from '@/store/user'
+import { likeContent, collectContent, unlikeContent, uncollectContent, getActionStatus } from '@/api/userAction.api'
+// 新增：使用现有埋点接口（不新建接口）
+import { trackLongVideoAction } from '@/api/longVideo.api'
 
 
 interface AudioItem {
@@ -303,6 +306,18 @@ const coinPopup = ref(false)
 const vipPopup = ref(false)
 const canViewVipAudio = ref(false)      // 是否VIP免费看
 const canWatchCoinAudio = ref(false)    // 是否金币免费看
+
+// 新增：一次性埋点标记
+const hasSentView = ref(false)
+
+// 新增：埋点函数（作品级，不含章节/时长）
+function sendViewOnce() {
+  if (hasSentView.value) return
+  const idNum = Number(audioId.value)
+  if (!idNum) return
+  hasSentView.value = true
+  trackLongVideoAction({ id: idNum, type: 'audio', action: 'view', user_uuid: userStore.userInfo?.uuid }).catch(() => {})
+}
 
 
 
@@ -399,12 +414,65 @@ function stopPlaybackOnce() {
   showToast('已自动停止播放')
 }
 function toggleLike() {
-  liked.value = !liked.value
-  showToast(liked.value ? '点赞成功' : '取消点赞')
+  if (!userStore.userInfo.uuid) {
+    showToast('请先登录')
+    return
+  }
+  
+  if (liked.value) {
+    // 取消点赞 - 使用音频ID
+    unlikeContent(Number(audioId.value), 'audio').then(() => {
+      liked.value = false
+      showToast('取消点赞')
+      if (audioData.value) {
+        audioData.value.likes = Math.max(0, audioData.value.likes - 1)
+      }
+    }).catch(() => {
+      showToast('操作失败')
+    })
+  } else {
+    // 点赞 - 使用音频ID
+    likeContent(Number(audioId.value), 'audio').then(() => {
+      liked.value = true
+      showToast('点赞成功')
+      if (audioData.value) {
+        audioData.value.likes += 1
+      }
+    }).catch(() => {
+      showToast('操作失败')
+    })
+  }
 }
+
 function toggleFavorite() {
-  favorited.value = !favorited.value
-  showToast(favorited.value ? '收藏成功' : '取消收藏')
+  if (!userStore.userInfo.uuid) {
+    showToast('请先登录')
+    return
+  }
+  
+  if (favorited.value) {
+    // 取消收藏 - 使用音频ID
+    uncollectContent(Number(audioId.value), 'audio').then(() => {
+      favorited.value = false
+      showToast('取消收藏')
+      if (audioData.value) {
+        audioData.value.collects = Math.max(0, audioData.value.collects - 1)
+      }
+    }).catch(() => {
+      showToast('操作失败')
+    })
+  } else {
+    // 收藏 - 使用音频ID
+    collectContent(Number(audioId.value), 'audio').then(() => {
+      favorited.value = true
+      showToast('收藏成功')
+      if (audioData.value) {
+        audioData.value.collects += 1
+      }
+    }).catch(() => {
+      showToast('操作失败')
+    })
+  }
 }
 
 /**
@@ -587,6 +655,7 @@ onMounted(async () => {
   chapterList.value = cache.list || []
   novelInfo.value = cache.novel || {}
   const firstChapter = chapterList.value[0]
+  
   // 查询已解锁ID + 权限
   if (userStore.userInfo.uuid) {
     try {
@@ -597,11 +666,17 @@ console.log('解锁权限 unlockRes:', unlockRes);
 unlockedChapterIds.value = (unlockRes.unlocked || []).map(Number)
 canViewVipAudio.value = unlockRes.can_view_vip_video == 1
 canWatchCoinAudio.value = unlockRes.can_watch_coin == 1
+
+      // 获取点赞收藏状态 - 使用音频ID
+      const status = await getActionStatus(Number(audioId.value), 'audio')
+      liked.value = status.isLiked || false
+      favorited.value = status.isCollected || false
     } catch (e: any) {
-      showToast(e.msg || '解锁记录获取失败')
+      console.log('获取状态失败:', e.msg)
     }
   }
-  // 初始化主界面为第一个章节信息
+  
+  // 初始化主界面为第一个章节信息 / 或仅 novel 信息
   if (firstChapter) {
     audioData.value = makeAudioData(firstChapter, novelInfo.value)
     duration.value = firstChapter.duration || 0
@@ -611,6 +686,9 @@ canWatchCoinAudio.value = unlockRes.can_watch_coin == 1
     duration.value = 0
     currentChapterIdx.value = 0
   }
+
+  // 新增：进入详情后仅上报一次作品级浏览（view）
+  sendViewOnce()
 })
 
 // 切换章节播放

@@ -75,6 +75,8 @@
     </swiper>
     <TabBar />
   </div>
+   <!-- 公告弹窗（type=notice） -->
+    <HomeNoticePopup />
   </SafeWrapper>
 </template>
 <script setup lang="ts">
@@ -97,6 +99,7 @@ import { useLongVideoStore } from "@/store/longVideoStore";
 import { useH5LongVideoStore } from "@/store/h5LongVideo.store";
 import { encode } from '@/utils/base62'
 import { storeToRefs } from 'pinia'
+import HomeNoticePopup from '@/components/HomeNoticePopup.vue'
 
 // 类型定义
 interface Category {

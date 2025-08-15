@@ -1,8 +1,8 @@
-import simpleService from '@/utils/request'
+import request from '@/utils/request'
 
 // 点赞内容
 export function likeContent(contentId: number, contentType: string): Promise<any> {
-  return simpleService.post('/api/h5/user/like', {
+  return request.post('user_like', {
     content_id: contentId,
     type: contentType
   })
@@ -10,7 +10,7 @@ export function likeContent(contentId: number, contentType: string): Promise<any
 
 // 收藏内容
 export function collectContent(contentId: number, contentType: string): Promise<any> {
-  return simpleService.post('/api/h5/user/collect', {
+  return request.post('user_collect', {
     content_id: contentId,
     type: contentType
   })
@@ -18,7 +18,7 @@ export function collectContent(contentId: number, contentType: string): Promise<
 
 // 取消点赞
 export function unlikeContent(contentId: number, contentType: string): Promise<any> {
-  return simpleService.post('/api/h5/user/unlike', {
+  return request.post('user_unlike', {
     content_id: contentId,
     type: contentType
   })
@@ -26,7 +26,7 @@ export function unlikeContent(contentId: number, contentType: string): Promise<a
 
 // 取消收藏
 export function uncollectContent(contentId: number, contentType: string): Promise<any> {
-  return simpleService.post('/api/h5/user/uncollect', {
+  return request.post('user_uncollect', {
     content_id: contentId,
     type: contentType
   })
@@ -34,18 +34,24 @@ export function uncollectContent(contentId: number, contentType: string): Promis
 
 // 获取用户操作状态
 export function getActionStatus(contentId: number, contentType: string): Promise<any> {
-  return simpleService.get('/api/h5/user/action_status', {
-    params: {
-      content_id: contentId,
-      type: contentType
-    }
+  return request.get('user_action_status', {
+    content_id: contentId,
+    type: contentType
   })
 }
 
 // 批量获取操作状态
 export function batchActionStatus(contentIds: number[], contentType: string): Promise<any> {
-  return simpleService.post('/api/h5/user/batch_action_status', {
+  return request.post('user_batch_action_status', {
     content_ids: contentIds,
     type: contentType
   })
+}
+
+// 获取用户收藏列表
+export function getMyCollections(page = 1, limit = 20, type?: string): Promise<any> {
+  const params: any = { page, limit }
+  if (type) params.type = type
+  
+  return request.get('user_collections', params)
 }

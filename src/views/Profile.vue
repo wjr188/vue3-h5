@@ -146,7 +146,7 @@
   </div>
 </template>
 <script setup lang="ts">
-import { ref, onMounted, watch, nextTick } from 'vue'
+import { ref, onMounted, watch, nextTick, computed } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { useUserStore } from '@/store/user'
 import { storeToRefs } from 'pinia'
@@ -165,6 +165,14 @@ const inited = ref(false)
 
 // Pinia 响应式数据
 const { uuid, nickname, avatar, inviteCode, isVIP, vipCardName, vipExpireTime } = storeToRefs(userStore)
+// 余额（兼容 userStore.goldCoins 或 userStore.userInfo.goldCoins 两种写法）
+const coinBalance = computed(() =>
+  Number((userStore as any).goldCoins ?? (userStore as any).userInfo?.goldCoins ?? 0)
+)
+
+// 千分位格式化（1,900 这种）
+const formatCoins = (n: number) => (Number(n) || 0).toLocaleString()
+
 
 const showPopup = ref(false)
 const showSaveTip = ref(false)
@@ -266,13 +274,16 @@ function generateInviteCode(): string {
   const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789'
   return Array.from({ length: 4 }, () => chars[Math.floor(Math.random() * chars.length)]).join('')
 }
-
-const topCards: CardItem[] = [
-  { icon: '/icons/gold.svg', title: '金币充值', desc: '金额：0.00', route: '/vip?tab=coin' },
+const topCards = computed<CardItem[]>(() => [
+  {
+    icon: '/icons/gold.svg',
+    title: '金币充值',
+    desc: `金额：${formatCoins(coinBalance.value)}`, // 或改成：金币
+    route: '/vip?tab=coin'
+  },
   { icon: '/icons/share.svg', title: '分享邀请', desc: '邀请领红包', route: '/promotion-share' },
   { icon: '/icons/promo.svg', title: '代理推广', desc: '全网最高分成' }
-]
-
+])
 const common: CardItem[] = [
   { icon: '/icons/order.svg', label: '我的订单', route: '/order-record' },
   { icon: '/icons/shop.svg', label: '我的购买', route: '/my-purchase' },

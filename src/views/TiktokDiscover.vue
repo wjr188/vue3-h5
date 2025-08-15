@@ -69,7 +69,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, nextTick, onActivated } from 'vue'
+import { ref, onMounted, nextTick, onActivated, watch } from 'vue'
 import { Swiper, SwiperSlide } from 'swiper/vue'
 import type { Swiper as SwiperType } from 'swiper'
 import type { ComponentPublicInstance } from 'vue'
@@ -81,6 +81,14 @@ import { useDouyinVideosStore } from '@/store/douyin.store'
 // 定义组件名，确保 keep-alive 能正确识别
 defineOptions({
   name: 'TiktokDiscover'
+})
+
+// 接收父组件传递的分类参数
+interface Props {
+  category?: string
+}
+const props = withDefaults(defineProps<Props>(), {
+  category: '最新'
 })
 
 interface VideoItem {
@@ -110,26 +118,52 @@ const noMoreMap = ref<Record<string, boolean>>({})
 const slideRefs = ref<(HTMLElement|null)[]>([])
 const pageReady = ref(false)
 
-const scrollPositions = ref<Record<string, number>>({})
 const pageMap = ref<Record<string, number>>({})
-const isRestoring = ref(false) // 标记是否正在恢复状态
+const isProgrammaticSlide = ref(false) // 标记是否为程序化切换，防止触发多余的请求
 
-// 防抖保存到 sessionStorage
-let saveToStorageTimer: ReturnType<typeof setTimeout> | null = null
-function debouncedSaveToStorage() {
-  if (saveToStorageTimer) {
-    clearTimeout(saveToStorageTimer)
-  }
-  saveToStorageTimer = setTimeout(() => {
-    sessionStorage.setItem('tiktokDiscoverScroll', JSON.stringify({
-      scrollPositions: scrollPositions.value,
-      currentTag: currentTag.value,
-      currentIndex: currentIndex.value
-    }))
-  }, 200) // 200ms 防抖
+// 简化的状态管理 - 直接使用一个对象存储所有状态
+const discoverState = ref({
+  scrollPositions: {} as Record<string, number>,
+  currentTag: '',
+  currentIndex: 0,
+  videoData: {} as Record<string, VideoItem[]>,
+  loadingStates: {} as Record<string, boolean>,
+  noMoreStates: {} as Record<string, boolean>
+})
+
+// 简化的状态保存和恢复
+function saveState() {
+  discoverState.value.currentTag = currentTag.value
+  discoverState.value.currentIndex = currentIndex.value
+  sessionStorage.setItem('tiktokDiscoverState', JSON.stringify(discoverState.value))
 }
 
-// 播放量格式化函数
+function restoreState() {
+  const saved = sessionStorage.getItem('tiktokDiscoverState')
+  if (saved) {
+    try {
+      const savedState = JSON.parse(saved)
+      discoverState.value = { ...discoverState.value, ...savedState }
+      
+      // 恢复当前标签和索引
+      if (savedState.currentTag && tags.value.includes(savedState.currentTag)) {
+        const correctIndex = tags.value.indexOf(savedState.currentTag)
+        currentTag.value = savedState.currentTag
+        currentIndex.value = correctIndex
+        
+        // 恢复视频数据
+        videoMap.value = { ...videoMap.value, ...savedState.videoData }
+        loadingMap.value = { ...loadingMap.value, ...savedState.loadingStates }
+        noMoreMap.value = { ...noMoreMap.value, ...savedState.noMoreStates }
+        
+        return true
+      }
+    } catch (error) {
+      console.error('恢复状态失败:', error)
+    }
+  }
+  return false
+}
 function formatPlayCount(count: number): string {
   if (count >= 100000) {
     return (count / 10000).toFixed(1).replace(/\.0$/, '') + 'w'
@@ -160,11 +194,12 @@ function onSlideScroll(i: number) {
   const tag = tags.value[i]
   const el = slideRefs.value[i]
   if (el && tag === currentTag.value) {
-    // 实时保存滚动位置
-    scrollPositions.value[tag] = el.scrollTop
+    // 保存滚动位置
+    discoverState.value.scrollPositions[tag] = el.scrollTop
     
-    // 防抖保存到 sessionStorage
-    debouncedSaveToStorage()
+    // 简单的节流保存
+    clearTimeout(saveStateTimer)
+    saveStateTimer = setTimeout(saveState, 300)
     
     const bottomOffset = el.scrollHeight - el.scrollTop - el.clientHeight
     
@@ -173,6 +208,8 @@ function onSlideScroll(i: number) {
     }
   }
 }
+
+let saveStateTimer: ReturnType<typeof setTimeout>
 
 // Swiper 初始化
 function onSwiperReady(swiper: SwiperType) {
@@ -183,34 +220,38 @@ function onSwiperReady(swiper: SwiperType) {
 function onTabClick(i: number) {
   if (currentIndex.value === i) return
 
-  saveScroll(currentTag.value)
+  // 保存当前状态
+  saveCurrentScroll()
 
   currentIndex.value = i
   currentTag.value = tags.value[i]
-  swiperInstance?.slideTo(i)
+  
+  // 标记为程序化切换
+  isProgrammaticSlide.value = true
+  swiperInstance?.slideTo(i, 300)
+  
+  setTimeout(() => {
+    isProgrammaticSlide.value = false
+  }, 400)
 
   // 懒加载数据
   if (!videoMap.value[currentTag.value] && !loadingMap.value[currentTag.value]) {
     loadTagData(currentTag.value)
   } else {
-    // 恢复滚动位置
-    nextTick(() => {
-      restoreScroll(currentTag.value)
-    })
+    nextTick(() => restoreCurrentScroll())
   }
 
   scrollNavToActive(i)
+  saveState()
 }
 
 // Swiper 滑动切换
 function onSwiperChange(swiper: SwiperType) {
-  // 如果正在恢复状态，不执行任何操作
-  if (isRestoring.value) {
-    return
-  }
+  // 如果是程序化切换，不执行任何操作
+  if (isProgrammaticSlide.value) return
   
   // 保存当前滚动位置
-  saveScroll(currentTag.value)
+  saveCurrentScroll()
   
   const idx = swiper.activeIndex
   if (idx < 0 || idx >= tags.value.length) return
@@ -224,11 +265,10 @@ function onSwiperChange(swiper: SwiperType) {
   }
   
   scrollNavToActive(idx)
+  saveState()
   
   // 恢复新标签滚动位置
-  nextTick(() => {
-    restoreScroll(currentTag.value)
-  })
+  nextTick(() => restoreCurrentScroll())
 }
 
 // 滚动标签到激活可视区域
@@ -243,38 +283,25 @@ function scrollNavToActive(index: number) {
   })
 }
 
-// 保存滚动位置
-function saveScroll(tag: string) {
-  const idx = tags.value.indexOf(tag)
+// 简化的滚动位置管理
+function saveCurrentScroll() {
+  const idx = tags.value.indexOf(currentTag.value)
   const el = slideRefs.value[idx]
   if (el) {
-    scrollPositions.value[tag] = el.scrollTop
-    // 保存到 sessionStorage
-    sessionStorage.setItem('tiktokDiscoverScroll', JSON.stringify({
-      scrollPositions: scrollPositions.value,
-      currentTag: currentTag.value,
-      currentIndex: currentIndex.value
-    }))
+    discoverState.value.scrollPositions[currentTag.value] = el.scrollTop
   }
 }
 
-// 恢复滚动位置
-function restoreScroll(tag: string) {
-  const idx = tags.value.indexOf(tag)
+function restoreCurrentScroll() {
+  const idx = tags.value.indexOf(currentTag.value)
   const el = slideRefs.value[idx]
-  const scrollTo = scrollPositions.value[tag] || 0
+  const scrollTo = discoverState.value.scrollPositions[currentTag.value] || 0
   
-  if (!el || scrollTo === 0) {
-    return
-  }
-  
-  nextTick(() => {
+  if (el && scrollTo > 0) {
     setTimeout(() => {
-      if (el && el.scrollHeight > el.clientHeight) {
-        el.scrollTop = scrollTo
-      }
-    }, 150)
-  })
+      el.scrollTop = scrollTo
+    }, 100)
+  }
 }
 
 const PAGE_SIZE = 20
@@ -311,6 +338,11 @@ async function loadTagData(tag: string) {
     pageMap.value[tag] = page + 1
     noMoreMap.value[tag] = newList.length < PAGE_SIZE
     
+    // 更新状态到本地存储
+    discoverState.value.videoData[tag] = videoMap.value[tag]
+    discoverState.value.loadingStates[tag] = false
+    discoverState.value.noMoreStates[tag] = noMoreMap.value[tag]
+    
     await nextTick()
     
   } catch (error) {
@@ -322,6 +354,48 @@ async function loadTagData(tag: string) {
   }
 }
 
+// 监听 category 参数变化
+watch(
+  () => props.category,
+  (newCategory) => {
+    if (newCategory && tags.value.length > 0) {
+      const targetIndex = tags.value.indexOf(newCategory)
+      if (targetIndex >= 0 && targetIndex !== currentIndex.value) {
+        // 保存当前滚动位置
+        saveCurrentScroll()
+        
+        // 切换到新标签
+        currentTag.value = newCategory
+        currentIndex.value = targetIndex
+        
+        // 标记为程序化切换，防止触发多余请求
+        isProgrammaticSlide.value = true
+        
+        // 直接跳转到目标位置，不使用动画
+        if (swiperInstance) {
+          swiperInstance.slideTo(targetIndex, 0) // 0ms，立即跳转
+        }
+        
+        // 延迟取消标记
+        setTimeout(() => {
+          isProgrammaticSlide.value = false
+        }, 100)
+        
+        // 懒加载数据
+        if (!videoMap.value[currentTag.value] && !loadingMap.value[currentTag.value]) {
+          loadTagData(currentTag.value)
+        } else {
+          nextTick(() => restoreCurrentScroll())
+        }
+        
+        scrollNavToActive(targetIndex)
+        saveState()
+      }
+    }
+  },
+  { immediate: false }
+)
+
 // 初始化
 onMounted(async () => {
   await tagStore.loadTags()
@@ -330,66 +404,66 @@ onMounted(async () => {
   
   // 初始化默认状态
   tags.value.forEach(tag => {
-    scrollPositions.value[tag] = 0
+    discoverState.value.scrollPositions[tag] = 0
   })
-  currentTag.value = tags.value[0]
-  currentIndex.value = 0
+  
+  // 根据传入的category参数设置初始标签
+  const targetIndex = tags.value.indexOf(props.category)
+  if (targetIndex >= 0) {
+    currentTag.value = props.category
+    currentIndex.value = targetIndex
+  } else {
+    currentTag.value = tags.value[0]
+    currentIndex.value = 0
+  }
   
   pageReady.value = true
   
   // 加载当前标签数据
   await loadTagData(currentTag.value)
+  
+  // 如果需要切换到指定标签，等待页面渲染完成后进行切换
+  if (targetIndex >= 0) {
+    nextTick(() => {
+      if (swiperInstance) {
+        isProgrammaticSlide.value = true
+        swiperInstance.slideTo(targetIndex, 0)
+        setTimeout(() => {
+          isProgrammaticSlide.value = false
+        }, 100)
+      }
+      scrollNavToActive(targetIndex)
+    })
+  }
 })
 
 // keep-alive 激活时恢复状态
 onActivated(() => {
-  // 从 sessionStorage 恢复状态
-  const saved = sessionStorage.getItem('tiktokDiscoverScroll')
-  if (saved) {
-    try {
-      const { scrollPositions: savedScrollPositions, currentTag: savedTag, currentIndex: savedIndex } = JSON.parse(saved)
-      
-      // 恢复滚动位置数据
-      scrollPositions.value = { ...scrollPositions.value, ...savedScrollPositions }
-      
-      // 如果有保存的标签状态且与当前状态不同，恢复它
-      if (savedTag && tags.value.includes(savedTag) && savedTag !== currentTag.value) {
-        // 设置恢复状态标记
-        isRestoring.value = true
-        
-        currentTag.value = savedTag
-        currentIndex.value = savedIndex
-        
-        // 切换到保存的标签（不触发数据重新加载）
-        if (swiperInstance) {
-          swiperInstance.slideTo(savedIndex, 0) // 0ms 动画时间，立即切换
-        }
-        
-        // 清除恢复状态标记
-        nextTick(() => {
-          setTimeout(() => {
-            isRestoring.value = false
-          }, 50)
-        })
+  if (!pageReady.value && tags.value.length > 0) {
+    pageReady.value = true
+  }
+  
+  // 尝试恢复保存的状态
+  const restored = restoreState()
+  
+  if (restored) {
+    // 状态恢复成功，切换到保存的标签
+    nextTick(() => {
+      if (swiperInstance && currentIndex.value !== swiperInstance.activeIndex) {
+        isProgrammaticSlide.value = true
+        swiperInstance.slideTo(currentIndex.value, 0)
+        setTimeout(() => {
+          isProgrammaticSlide.value = false
+        }, 100)
       }
       
-      // 恢复滚动位置（无论标签是否切换都需要恢复）
-      const targetTag = savedTag && tags.value.includes(savedTag) ? savedTag : currentTag.value
-      const savedScrollPos = savedScrollPositions[targetTag] || 0
+      scrollNavToActive(currentIndex.value)
       
-      if (savedScrollPos > 0) {
-        nextTick(() => {
-          setTimeout(() => {
-            restoreScroll(targetTag)
-          }, 100) // 减少延迟
-        })
-      }
-      
-    } catch (error) {
-      console.error('恢复状态失败:', error)
-    }
-  } else {
-    // 首次进入，没有保存状态
+      // 恢复滚动位置
+      setTimeout(() => {
+        restoreCurrentScroll()
+      }, 150)
+    })
   }
 })
 </script>

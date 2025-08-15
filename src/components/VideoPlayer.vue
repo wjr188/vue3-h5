@@ -120,6 +120,8 @@ const hasPlayed = ref(false)
 const showNativeControls = ref(false)
 const showControls = ref(false)
 let controlBarTimeout: ReturnType<typeof setTimeout> | null = null
+// 新增：防并发的播放 Promise
+let playingPromise: Promise<void> | null = null
 
 const showSpeedPanel = ref(false)
 const speedOptions = [0.75, 1.0, 1.25, 1.75, 2.0]
@@ -176,6 +178,10 @@ async function handleFirstPlay() {
       hls.value.loadSource(props.src);
       hls.value.attachMedia(el);
       console.log('[VideoPlayer] hls.js 初始化:', props.src);
+      // HLS 就绪后再播放，避免并发中断
+      hls.value.on(Hls.Events.MANIFEST_PARSED, () => {
+        safePlay();
+      });
     } else {
       if (hls.value) {
         hls.value.destroy();
@@ -183,11 +189,12 @@ async function handleFirstPlay() {
       }
       el.src = props.src;
       console.log('[VideoPlayer] 原生src初始化:', props.src);
+      // 原生等 canplay 再播一次
+      el.addEventListener('canplay', () => safePlay(), { once: true });
     }
 
     el.style.pointerEvents = 'auto';
     el.playbackRate = playbackRate.value;
-    el.play();
 
     showNativeControls.value = isUseNative;
     if (!isUseNative) {
@@ -195,6 +202,32 @@ async function handleFirstPlay() {
       startAutoHideControlBar();
     }
   });
+}
+
+// 封装安全播放，避免并发 & 忽略 AbortError
+async function safePlay() {
+  const el = video.value;
+  if (!el) return;
+  if (!el.paused || playingPromise) return; // 已在播或正在发起播放
+  try {
+    playingPromise = el.play();
+    await playingPromise;
+    isPlaying.value = true;
+  } catch (e: any) {
+    if (!(e && (e.name === 'AbortError' || e.code === 20))) {
+      console.warn('[VideoPlayer] 播放失败:', e);
+    }
+  } finally {
+    playingPromise = null;
+  }
+}
+
+function safePause() {
+  const el = video.value;
+  if (!el) return;
+  if (el.paused) return;
+  el.pause();
+  isPlaying.value = false;
 }
 
 const seek = (seconds: number) => {
@@ -206,11 +239,10 @@ const seek = (seconds: number) => {
 const togglePlay = () => {
   if (!video.value) return
   if (video.value.paused) {
-    video.value.play()
+    safePlay()
     isPlaying.value = true
   } else {
-    video.value.pause()
-    isPlaying.value = false
+    safePause()
   }
   startAutoHideControlBar()
 }
